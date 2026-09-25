@@ -11,6 +11,7 @@ function writeElevationIntent(filePath, options, now = Date.now()) {
     createdAt: now,
     options: {
       nodeId: String(options.nodeId || "").slice(0, 120),
+      groupName: String(options.groupName || "").slice(0, 120),
       mode: ["rule", "global", "direct"].includes(options.mode) ? options.mode : "rule",
       systemProxy: options.systemProxy !== false,
       tun: true
@@ -34,6 +35,7 @@ function consumeElevationIntent(filePath, nonce, now = Date.now()) {
       !["rule", "global", "direct"].includes(options.mode) || options.tun !== true) return null;
   return {
     nodeId: options.nodeId,
+    groupName: typeof options.groupName === "string" ? options.groupName : "",
     mode: options.mode,
     systemProxy: options.systemProxy !== false,
     tun: true

@@ -117,7 +117,60 @@ app.whenReady().then(async () => {
     return [...document.querySelectorAll('.delay-button')].every(button => !button.disabled);
   })()`);
   if (!delayEnabled) throw new Error("Delay button stayed disabled with a selected node");
-  process.stdout.write(`${JSON.stringify({ ...checks, topButton, hitCounts, closeChecks, delayEnabled, ...target, ...profileChecks, trafficChecks, screenshot: output, profilesScreenshot: profilesOutput })}\n`);
+  const pickerChecks = await view.webContents.executeJavaScript(`(() => {
+    nodes = [
+      { id: 'local', name: '日本代理', source: '本机配置' },
+      { id: 'subscription:demo:0', name: '美国代理2', source: '我的订阅' }
+    ];
+    selectedNodeId = 'local';
+    runtime = { active: false, starting: false, restarting: false, error: null };
+    renderNodes();
+    document.querySelector('#home-node-trigger').click();
+    const opened = !document.querySelector('#home-node-menu').hidden;
+    const options = [...document.querySelectorAll('.node-picker-option')].map(option => ({
+      name: option.querySelector('strong').textContent,
+      selected: option.classList.contains('selected')
+    }));
+    document.querySelectorAll('.node-picker-option')[1].click();
+    return {
+      opened,
+      options,
+      selectedNodeId,
+      selectedName: document.querySelector('#home-node-name').textContent,
+      closed: document.querySelector('#home-node-menu').hidden
+    };
+  })()`);
+  if (!pickerChecks.opened || pickerChecks.options.length !== 2 ||
+      !pickerChecks.options[0].selected || pickerChecks.options[1].selected ||
+      pickerChecks.selectedNodeId !== 'subscription:demo:0' ||
+      pickerChecks.selectedName !== '美国代理2' || !pickerChecks.closed) {
+    throw new Error(`Node picker failed: ${JSON.stringify(pickerChecks)}`);
+  }
+  const groupChecks = await view.webContents.executeJavaScript(`(() => {
+    proxyGroups = ['PROXY', 'GLOBAL'];
+    selectedGroupName = 'PROXY';
+    renderGroupPicker();
+    document.querySelector('#home-group-trigger').click();
+    const opened = !document.querySelector('#home-group-menu').hidden;
+    const options = [...document.querySelectorAll('#home-group-menu .node-picker-option')].map(option => option.querySelector('strong').textContent);
+    document.querySelectorAll('#home-group-menu .node-picker-option')[1].click();
+    return { opened, options, selectedGroupName, choice: document.querySelector('#home-group-choice').textContent, closed: document.querySelector('#home-group-menu').hidden };
+  })()`);
+  if (!groupChecks.opened || groupChecks.options.join(',') !== 'PROXY,GLOBAL' ||
+      groupChecks.selectedGroupName !== 'GLOBAL' || groupChecks.choice !== 'GLOBAL' || !groupChecks.closed) {
+    throw new Error(`Group picker failed: ${JSON.stringify(groupChecks)}`);
+  }
+  const optimisticSelection = await view.webContents.executeJavaScript(`(() => {
+    selectedNodeId = 'subscription:demo:0';
+    selectedGroupName = 'PROXY';
+    runtime = { active: false, starting: false, restarting: false, error: null, nodeId: 'local' };
+    renderRuntime({ ...runtime, starting: true, nodeId: selectedNodeId, nodeName: '美国代理2', groupName: selectedGroupName });
+    return { selectedNodeId, selectedName: document.querySelector('#home-node-name').textContent, group: selectedGroupName };
+  })()`);
+  if (optimisticSelection.selectedNodeId !== 'subscription:demo:0' || optimisticSelection.selectedName !== '美国代理2') {
+    throw new Error(`Optimistic selection was overwritten: ${JSON.stringify(optimisticSelection)}`);
+  }
+  process.stdout.write(`${JSON.stringify({ ...checks, topButton, hitCounts, closeChecks, delayEnabled, pickerChecks, groupChecks, optimisticSelection, ...target, ...profileChecks, trafficChecks, screenshot: output, profilesScreenshot: profilesOutput })}\n`);
   window.close();
   app.quit();
 }).catch(error => {

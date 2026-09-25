@@ -27,6 +27,11 @@ const moduleContent = document.getElementById("moduleContent");
 const findBar = document.getElementById("findBar");
 const findInput = document.getElementById("findInput");
 const findResult = document.getElementById("findResult");
+const browserRouteButton = document.getElementById("browserRouteButton");
+const browserRouteOverlay = document.getElementById("browserRouteOverlay");
+const browserRouteOptions = document.getElementById("browserRouteOptions");
+const browserRouteForm = document.getElementById("browserRouteForm");
+const browserRouteError = document.getElementById("browserRouteError");
 
 let currentState = null;
 let activeModule = null;
@@ -250,13 +255,14 @@ function applyAppearance(state) {
 function closeUpdatePrompt() {
   dismissedUpdateVersion = currentState?.modules?.updates?.latestVersion || null;
   updatePrompt.hidden = true;
-  api.setOverlayOpen(Boolean(activeModule));
+  api.setOverlayOpen(Boolean(activeModule || !browserRouteOverlay.hidden));
 }
 
 function showUpdatePrompt() {
   const update = currentState?.modules?.updates || {};
   if (update.status !== "available") return;
   if (activeModule) closeModule();
+  closeBrowserRouteMenu();
   updatePromptVersion.textContent = `Drip ${update.latestVersion || "新版本"}`;
   updatePrompt.hidden = false;
   api.setOverlayOpen(true);
@@ -275,6 +281,7 @@ function maybeShowUpdatePrompt(previousState, state) {
 function render(state) {
   const previousState = currentState;
   currentState = state;
+  renderBrowserRoutes();
   applyAppearance(state);
   renderTabs(state);
 
@@ -311,7 +318,14 @@ function render(state) {
     : '<i data-lucide="sun"></i>';
   const account = state.modules?.account;
   const profileName = account?.user?.displayName || "本地用户";
-  profileInitial.textContent = profileName.slice(0, 1).toUpperCase();
+  if (account?.status === "signed-in" && account.user?.avatarData) {
+    const avatar = document.createElement("img");
+    avatar.src = account.user.avatarData;
+    avatar.alt = "";
+    profileInitial.replaceChildren(avatar);
+  } else {
+    profileInitial.textContent = profileName.slice(0, 1).toUpperCase();
+  }
   profileButton.classList.toggle("is-signed-in", account?.status === "signed-in");
   profileButton.title = account?.status === "signed-in" ? `${profileName} · Drip 账号` : "登录 Drip 账号";
   maybeShowUpdatePrompt(previousState, state);
@@ -325,6 +339,7 @@ function render(state) {
 }
 
 function openModule(name) {
+  closeBrowserRouteMenu();
   if (!updatePrompt.hidden) closeUpdatePrompt();
   activeModule = moduleTitles[name] ? name : "menu";
   if (name === "history") {
@@ -345,8 +360,134 @@ function openModule(name) {
 function closeModule() {
   activeModule = null;
   moduleOverlay.hidden = true;
-  api.setOverlayOpen(!updatePrompt.hidden);
+  api.setOverlayOpen(!updatePrompt.hidden || !browserRouteOverlay.hidden);
 }
+
+function closeBrowserRouteMenu() {
+  if (browserRouteOverlay.hidden) return;
+  browserRouteOverlay.hidden = true;
+  browserRouteButton.setAttribute("aria-expanded", "false");
+  browserRouteForm.hidden = true;
+  browserRouteError.hidden = true;
+  api.setOverlayOpen(Boolean(activeModule || !updatePrompt.hidden));
+}
+
+function addBrowserRouteOption(group, label, detail, icon, route, selected) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `browser-route-option${selected ? " selected" : ""}`;
+  button.dataset.route = JSON.stringify(route);
+  button.setAttribute("aria-label", `${label}，${detail}`);
+  const symbol = document.createElement("i");
+  symbol.dataset.lucide = icon;
+  const copy = document.createElement("span");
+  copy.className = "browser-route-copy";
+  const title = document.createElement("strong");
+  title.textContent = label;
+  const sub = document.createElement("small");
+  sub.textContent = detail;
+  copy.append(title, sub);
+  const check = document.createElement("i");
+  check.dataset.lucide = "check";
+  check.className = "browser-route-check";
+  button.append(symbol, copy, check);
+  group.append(button);
+}
+
+function renderBrowserRoutes() {
+  const state = currentState?.browserRoute;
+  if (!state) return;
+  const selected = state.selected || { mode: "default" };
+  const selectedNode = state.nodes?.find(node => node.id === selected.nodeId);
+  const label = selected.mode === "node" || selected.mode === "managed" ? (selectedNode?.name || "节点不可用")
+    : selected.mode === "manual" ? `${selected.protocol.toUpperCase()} ${selected.host}:${selected.port}`
+    : { default: "Drip 默认线路", direct: "直连", system: "跟随系统代理" }[selected.mode];
+  browserRouteButton.title = `浏览器代理：${label}${state.error ? ` · ${state.error}` : ""}`;
+  browserRouteButton.dataset.mode = selected.mode;
+  browserRouteButton.classList.toggle("has-error", Boolean(state.error));
+  if (state.error) {
+    browserRouteError.textContent = state.error;
+    browserRouteError.hidden = false;
+  }
+  const options = document.createDocumentFragment();
+  const caption = value => {
+    const element = document.createElement("div");
+    element.className = "browser-route-caption";
+    element.textContent = value;
+    options.append(element);
+  };
+  caption("线路");
+  addBrowserRouteOption(options, "Drip 默认线路", "需要账号及邀请码授权", "route", { mode: "default" }, selected.mode === "default");
+  addBrowserRouteOption(options, "直连", "不使用浏览器代理", "globe-2", { mode: "direct" }, selected.mode === "direct");
+  addBrowserRouteOption(options, "跟随系统代理", "使用 Windows 当前代理", "monitor", { mode: "system" }, selected.mode === "system");
+  const managedNodes = (state.nodes || []).filter(node => node.id.startsWith("managed:"));
+  if (managedNodes.length) {
+    caption("Drip 授权线路");
+    for (const node of managedNodes) {
+      addBrowserRouteOption(options, node.name, "账号授权节点", "wifi", { mode: "managed", nodeId: node.id }, selected.mode === "managed" && selected.nodeId === node.id);
+    }
+  }
+  const personalNodes = (state.nodes || []).filter(node => !node.id.startsWith("managed:"));
+  if (personalNodes.length) {
+    caption("我的订阅");
+    for (const node of personalNodes) {
+      addBrowserRouteOption(options, node.name, node.source || "Drip 节点", "wifi", { mode: "node", nodeId: node.id }, selected.mode === "node" && selected.nodeId === node.id);
+    }
+  }
+  if (selected.mode === "manual") {
+    caption("手动代理");
+    addBrowserRouteOption(options, label, "手动添加", "server", selected, true);
+  }
+  browserRouteOptions.replaceChildren(options);
+  refreshIcons();
+}
+
+browserRouteButton.addEventListener("click", () => {
+  if (!browserRouteOverlay.hidden) return closeBrowserRouteMenu();
+  if (activeModule) closeModule();
+  if (!updatePrompt.hidden) closeUpdatePrompt();
+  renderBrowserRoutes();
+  browserRouteOverlay.hidden = false;
+  browserRouteButton.setAttribute("aria-expanded", "true");
+  api.setOverlayOpen(true);
+});
+document.getElementById("browserRouteScrim").addEventListener("click", closeBrowserRouteMenu);
+browserRouteOptions.addEventListener("click", async event => {
+  const button = event.target.closest("[data-route]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await api.setBrowserRoute(JSON.parse(button.dataset.route));
+    closeBrowserRouteMenu();
+  } catch (error) {
+    browserRouteError.textContent = error.message;
+    browserRouteError.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+});
+document.getElementById("browserRouteAdd").addEventListener("click", () => {
+  browserRouteForm.hidden = !browserRouteForm.hidden;
+  browserRouteError.hidden = true;
+  if (!browserRouteForm.hidden) browserRouteForm.elements.host.focus();
+});
+browserRouteForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = browserRouteForm.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api.setBrowserRoute({
+      mode: "manual", protocol: browserRouteForm.elements.protocol.value,
+      host: browserRouteForm.elements.host.value, port: Number(browserRouteForm.elements.port.value)
+    });
+    closeBrowserRouteMenu();
+  } catch (error) {
+    browserRouteError.textContent = error.message;
+    browserRouteError.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+});
 
 function menuMarkup() {
   const active = currentState?.tabs.find(tab => tab.id === currentState.activeTabId);
@@ -546,16 +687,24 @@ function profileMarkup() {
   }
 
   const user = account.user;
+  const grant = account.entitlement;
+  const usage = grant ? `${(grant.usedBytes / 1024 ** 3).toFixed(2)} / ${(grant.quotaBytes / 1024 ** 3).toFixed(0)} GB` : "尚未授权";
+  const expiry = grant?.endsAt ? new Date(grant.endsAt * 1000).toLocaleDateString("zh-CN") : "-";
   const created = user.createdAt ? new Date(user.createdAt * 1000).toLocaleDateString("zh-CN") : "-";
   const message = account.error
     ? `<p class="form-message is-error"><i data-lucide="circle-alert"></i>${escapeHtml(account.error)}</p>`
     : account.notice ? `<p class="form-message is-success"><i data-lucide="circle-check"></i>${escapeHtml(account.notice)}</p>` : "";
   return `
     <div class="profile-hero">
-      <div class="profile-avatar-large">${escapeHtml(user.displayName.slice(0, 1).toUpperCase())}</div>
-      <div><h3>${escapeHtml(user.displayName)}</h3><p>@${escapeHtml(user.username)} · 服务器账号已连接</p></div>
+      <button class="profile-avatar-large profile-avatar-edit" type="button" data-command="account-avatar-select" title="更换头像" aria-label="更换头像" ${account.busy ? "disabled" : ""}>${user.avatarData ? `<img src="${escapeHtml(user.avatarData)}" alt="">` : escapeHtml(user.displayName.slice(0, 1).toUpperCase())}<span class="avatar-edit-icon"><i data-lucide="camera"></i></span></button>
+      <input id="accountAvatarInput" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+      <div><h3>${escapeHtml(user.displayName)}</h3><p>@${escapeHtml(user.username)} · 服务器账号已连接</p>${user.avatarData ? `<button class="avatar-remove" type="button" data-command="account-avatar-remove" ${account.busy ? "disabled" : ""}>移除头像</button>` : ""}</div>
     </div>
     <div class="account-meta"><span>账号编号</span><strong>${escapeHtml(user.id)}</strong><span>注册日期</span><strong>${escapeHtml(created)}</strong></div>
+    <div class="settings-group"><h3>Drip 线路</h3></div>
+    <div class="account-meta"><span>授权状态</span><strong>${grant?.active ? "可用" : "未授权或已失效"}</strong><span>服务器计量</span><strong>${escapeHtml(usage)}</strong><span>到期日期</span><strong>${escapeHtml(expiry)}</strong></div>
+    <form class="form-section account-form" data-account-form="redeem"><label for="inviteCode">邀请码</label><input class="form-input" id="inviteCode" name="code" autocomplete="off" maxlength="100" required><div class="form-actions"><button class="primary-button" type="submit" ${account.busy ? "disabled" : ""}>${grant?.active ? "叠加兑换" : "兑换线路"}</button></div></form>
+    ${message}
     <form class="form-section account-form" data-account-form="profile">
       <label for="accountDisplayName">显示名称</label>
       <input class="form-input" id="accountDisplayName" name="displayName" maxlength="24" value="${escapeHtml(user.displayName)}" required>
@@ -571,9 +720,31 @@ function profileMarkup() {
     </form>
     <div class="settings-group"><h3>设备管理</h3><div id="accountDevices" class="device-list"></div><button class="menu-row" data-command="account-revoke-all"><i data-lucide="log-out"></i><span>退出其他所有设备</span></button></div>
     <div class="settings-group"><h3>云同步</h3><button class="menu-row" data-command="account-sync-up"><i data-lucide="upload"></i><span>将设置上传到云端</span></button><button class="menu-row" data-command="account-sync-down"><i data-lucide="download"></i><span>从云端恢复设置</span></button></div>
-    ${message}
     <div class="account-footer"><button class="text-button danger-button" type="button" data-command="account-logout"><i data-lucide="log-out"></i>退出登录</button></div>
     <p class="status-note">账号身份与登录会话由服务器统一管理；书签、历史记录和网站 Cookie 仍只保存在这台电脑，设置项可手动同步到云端。</p>`;
+}
+
+async function prepareAccountAvatar(file) {
+  if (!file || !["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 10 * 1024 * 1024) {
+    throw new Error("请选择不超过 10 MB 的 JPG、PNG 或 WebP 图片");
+  }
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 256;
+    const side = Math.min(bitmap.width, bitmap.height);
+    const context = canvas.getContext("2d");
+    context.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2,
+      side, side, 0, 0, 256, 256);
+    for (const quality of [0.88, 0.75, 0.6, 0.45]) {
+      const data = canvas.toDataURL("image/jpeg", quality);
+      if (data.length <= 90000 && (data.length - "data:image/jpeg;base64,".length) * 0.75 <= 64 * 1024) return data;
+    }
+    throw new Error("头像压缩后仍超过 64 KB，请换一张图片");
+  } finally {
+    bitmap.close();
+  }
 }
 
 async function renderAccountDevices() {
@@ -810,6 +981,13 @@ moduleContent.addEventListener("click", async event => {
   if (command === "choose-download-path") await api.setDownloadPath();
   if (command === "account-show-login") { accountFormMode = "login"; renderModule(); }
   if (command === "account-show-register") { accountFormMode = "register"; renderModule(); }
+  if (command === "account-avatar-select") document.getElementById("accountAvatarInput")?.click();
+  if (command === "account-avatar-remove") {
+    const result = await api.accountUpdateAvatar("");
+    currentState.modules.account = result;
+    render(currentState);
+    renderModule();
+  }
   if (command === "account-logout") {
     const result = await api.accountLogout();
     currentState.modules.account = result;
@@ -946,6 +1124,9 @@ moduleContent.addEventListener("submit", async event => {
     result = await api.accountUpdateProfile(values.displayName);
   } else if (mode === "password") {
     result = await api.accountChangePassword({ currentPassword: values.currentPassword, newPassword: values.newPassword });
+  } else if (mode === "redeem") {
+    try { result = await api.accountRedeem(values.code); }
+    catch (error) { result = { ...currentState.modules.account, error: error.message }; }
   }
   if (result) {
     currentState.modules.account = result;
@@ -955,6 +1136,21 @@ moduleContent.addEventListener("submit", async event => {
 });
 
 moduleContent.addEventListener("change", event => {
+  if (event.target.id === "accountAvatarInput") {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    (async () => {
+      try {
+        const result = await api.accountUpdateAvatar(await prepareAccountAvatar(file));
+        currentState.modules.account = result;
+      } catch (error) {
+        currentState.modules.account = { ...currentState.modules.account, error: error.message, notice: null };
+      }
+      render(currentState);
+      renderModule();
+    })();
+    return;
+  }
   if (event.target.dataset.extensionToggle) {
     api.toggleExtension(event.target.dataset.extensionToggle, event.target.checked);
     return;
@@ -1179,7 +1375,9 @@ maximizeButton.addEventListener("click", () => api.toggleMaximizeWindow());
 document.getElementById("closeWindow").addEventListener("click", () => api.closeWindow());
 document.addEventListener("keydown", event => {
   if (event.key !== "Escape") return;
-  if (!updatePrompt.hidden) {
+  if (!browserRouteOverlay.hidden) {
+    closeBrowserRouteMenu();
+  } else if (!updatePrompt.hidden) {
     closeUpdatePrompt();
   } else if (activeModule) {
     closeModule();
@@ -1190,6 +1388,7 @@ document.addEventListener("keydown", event => {
 
 api.onState(render);
 api.onFocusAddress(() => {
+  closeBrowserRouteMenu();
   if (activeModule) closeModule();
   addressInput.focus();
   addressInput.select();

@@ -21,11 +21,14 @@ const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const yaml = require("js-yaml");
 const { AccountService } = require("./account-service.cjs");
 const { UpdateManager } = require("./update-manager.cjs");
 const { ProxyNodeStore } = require("./proxy-node-store.cjs");
-const { ProxySubscriptionStore } = require("./proxy-subscription-store.cjs");
+const { ProxySubscriptionStore, parseSubscription } = require("./proxy-subscription-store.cjs");
 const { buildProxyConfig } = require("./proxy-config.cjs");
+const { normalizeBrowserRoute, proxyRulesForManual } = require("./browser-route.cjs");
+const { routeUsesManagedAccess, isManagedNodeAuthorized } = require("./managed-access.cjs");
 const { ProxyTrafficTracker } = require("./proxy-traffic.cjs");
 const { writeElevationIntent, consumeElevationIntent } = require("./proxy-elevation.cjs");
 
@@ -92,6 +95,16 @@ let managedProxyStatsError = null;
 let managedProxyRules = [];
 let managedProxyDelayPending = null;
 let managedProxyQuitCleanup = false;
+let browserRoute = { mode: "default" };
+let browserRouteChild = null;
+let browserRoutePort = null;
+let browserRouteError = null;
+let browserRouteOwnerUserId = null;
+let browserRouteManagedNodeId = null;
+let managedProxyOwnerUserId = null;
+let accountAccessEpoch = 0;
+let accountAccessFingerprint = "";
+let browserRouteChange = Promise.resolve();
 let managedProxyState = {
   active: false,
   starting: false,
@@ -100,7 +113,8 @@ let managedProxyState = {
   systemProxy: true,
   tun: false,
   nodeId: "local",
-  nodeName: "日本代理"
+  nodeName: "日本代理",
+  groupName: "PROXY"
 };
 let saveBrowserDataTimer = null;
 const startupTimings = {};
@@ -540,6 +554,56 @@ function readCoreJson(port, secret, urlPath, timeoutMs = 2000) {
   });
 }
 
+function writeCoreJson(port, secret, urlPath, payload, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const request = http.request({
+      hostname: "127.0.0.1", port, path: urlPath, method: "PUT", agent: false,
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body)
+      }
+    }, response => {
+      response.resume();
+      response.once("end", () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`代理内核接口返回 ${response.statusCode}`));
+          return;
+        }
+        resolve({ ok: true });
+      });
+      response.once("error", reject);
+    });
+    request.setTimeout(timeoutMs, () => request.destroy(new Error("代理内核接口超时")));
+    request.once("error", reject);
+    request.end(body);
+  });
+}
+
+function preferredCoreGroup(config, nodeName) {
+  const groups = Array.isArray(config?.["proxy-groups"]) ? config["proxy-groups"] : [];
+  const candidates = groups.filter(group => group?.name && Array.isArray(group.proxies) && group.proxies.includes(nodeName));
+  if (!candidates.length) return "";
+  const matchRule = Array.isArray(config?.rules)
+    ? config.rules.find(rule => /^MATCH,/i.test(String(rule)))
+    : "";
+  const ruleGroup = String(matchRule || "").split(",")[1] || "";
+  return candidates.find(group => group.name === ruleGroup)?.name || candidates[0].name;
+}
+
+async function selectCoreNode(port, secret, nodeName, preferredGroup = "") {
+  if (!nodeName) return;
+  const snapshot = await readCoreJson(port, secret, "/proxies");
+  const proxies = snapshot?.proxies && typeof snapshot.proxies === "object" ? snapshot.proxies : snapshot;
+  const entries = Object.entries(proxies || {}).filter(([, proxy]) =>
+    proxy?.type === "Selector" && Array.isArray(proxy.all) && proxy.all.includes(nodeName)
+  );
+  const preferred = preferredGroup && entries.find(([name]) => name === preferredGroup);
+  const group = preferred || entries[0];
+  if (group) await writeCoreJson(port, secret, `/proxies/${encodeURIComponent(group[0])}`, { name: nodeName });
+}
+
 async function managedProxyStats() {
   const tracker = trafficTracker();
   if (!managedProxyState.active || !managedProxyApiPort || !managedProxyApiSecret) return tracker.current(false);
@@ -554,9 +618,9 @@ async function managedProxyStats() {
   finally { managedProxyStatsPending = null; }
 }
 
-async function runProxyDelay(port, secret) {
+async function runProxyDelay(port, secret, nodeName = "proxy") {
   const query = new URLSearchParams({ url: "https://www.gstatic.com/generate_204", timeout: "5000" });
-  const result = await readCoreJson(port, secret, `/proxies/proxy/delay?${query}`, 6500);
+  const result = await readCoreJson(port, secret, `/proxies/${encodeURIComponent(nodeName)}/delay?${query}`, 6500);
   if (!Number.isFinite(result.delay) || result.delay <= 0) throw new Error("节点未返回有效延迟");
   return { delay: result.delay };
 }
@@ -566,7 +630,7 @@ async function testProxyNode(nodeId) {
   if (!entry) throw new Error("请先选择节点");
   if (managedProxyState.active) {
     if (entry.id !== managedProxyState.nodeId) throw new Error("运行中只能测试当前节点");
-    return runProxyDelay(managedProxyApiPort, managedProxyApiSecret);
+    return runProxyDelay(managedProxyApiPort, managedProxyApiSecret, entry.name);
   }
   if (managedProxyState.starting) throw new Error("请等待代理启动完成");
   if (managedProxyDelayPending) return managedProxyDelayPending;
@@ -580,12 +644,12 @@ async function testProxyNode(nodeId) {
       const mixedPort = await findFreePort();
       const apiPort = await findFreePort();
       const secret = crypto.randomBytes(24).toString("hex");
-      const config = buildProxyConfig(entry.node, { mixedPort, apiPort, apiSecret: secret, mode: "global", tun: false });
-      const configPath = path.join(directory, "config.json");
-      fs.writeFileSync(configPath, JSON.stringify(config), "utf8");
-      const executable = app.isPackaged ? path.join(process.resourcesPath, "app.asar.unpacked", "runtime", "sing-box.exe") : path.join(__dirname, "runtime", "sing-box.exe");
+      const config = buildProxyConfig(entry, { mixedPort, apiPort, apiSecret: secret, mode: "global", tun: false });
+      const configPath = path.join(directory, "config.yaml");
+      fs.writeFileSync(configPath, yaml.dump(config, { noRefs: true, lineWidth: -1 }), "utf8");
+      const executable = app.isPackaged ? path.join(process.resourcesPath, "app.asar.unpacked", "runtime", "mihomo.exe") : path.join(__dirname, "runtime", "mihomo.exe");
       if (!fs.existsSync(executable)) throw new Error("代理内核文件不完整");
-      child = spawn(executable, ["run", "-c", configPath], {
+      child = spawn(executable, ["-d", directory, "-f", configPath], {
         cwd: path.dirname(executable), windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
       });
       child.once("close", () => { childClosed = true; });
@@ -594,7 +658,8 @@ async function testProxyNode(nodeId) {
       child.stderr.on("data", chunk => { output = (output + String(chunk)).slice(-4000); });
       child.once("error", error => { output = error.message; });
       await waitForPort(apiPort, child, 8000, () => output.split(/\r?\n/).findLast(line => /FATAL|ERROR/i.test(line)) || "");
-      return await runProxyDelay(apiPort, secret);
+      await selectCoreNode(apiPort, secret, entry.name, preferredCoreGroup(config, entry.name));
+      return await runProxyDelay(apiPort, secret, entry.name);
     } finally {
       if (child && !childClosed) {
         const closed = new Promise(resolve => {
@@ -613,6 +678,12 @@ async function testProxyNode(nodeId) {
 }
 
 function summarizeProxyRules(config) {
+  if (Array.isArray(config.rules)) {
+    return config.rules.slice(0, 80).map(rule => {
+      const parts = String(rule).split(",");
+      return { type: "规则", content: String(rule).slice(0, 180), outbound: parts[parts.length - 1] || "--" };
+    });
+  }
   const rules = (config.route?.rules || []).flatMap(rule => {
     if (rule.action === "hijack-dns") return [{ type: "DNS", content: "TUN 的 53 端口请求", outbound: "内置 DNS" }];
     if (rule.ip_is_private) return [{ type: "IP", content: "局域网及私有地址", outbound: rule.outbound }];
@@ -626,7 +697,7 @@ function summarizeProxyRules(config) {
 }
 
 function readManagedProxyLogs() {
-  const logPath = path.join(app.getPath("userData"), "proxy-runtime", "sing-box.log");
+  const logPath = path.join(app.getPath("userData"), "proxy-runtime", "mihomo.log");
   if (!fs.existsSync(logPath)) return [];
   const fd = fs.openSync(logPath, "r");
   let raw;
@@ -649,30 +720,238 @@ function readManagedProxyLogs() {
 
 function availableProxyNodes() {
   const nodes = [];
-  try {
-    const local = proxyNodeStore?.readNode();
-    if (local) nodes.push({ id: "local", name: local.name, source: "本机配置", node: local });
-  } catch {}
+  const account = accountService?.snapshot();
+  if (account?.status === "signed-in" && account.entitlement?.active) {
+    for (const managed of accountService.nodeLinks || []) {
+      try {
+        const node = parseSubscription(managed.url).nodes[0];
+        node.name = managed.name;
+        nodes.push({ id: `managed:${managed.id}`, name: managed.name,
+          source: "Drip 授权线路", node });
+      } catch {}
+    }
+  }
   try {
     nodes.push(...(proxySubscriptionStore?.listNodes() || []));
   } catch {}
   return nodes;
 }
 
+function availableProxyGroups() {
+  const names = new Set();
+  for (const entry of availableProxyNodes()) {
+    const groups = entry.profile?.["proxy-groups"];
+    if (!Array.isArray(groups)) continue;
+    for (const group of groups) {
+      if (typeof group?.name === "string" && group.name.trim()) names.add(group.name.trim().slice(0, 120));
+    }
+  }
+  if (!names.size) names.add("PROXY");
+  return [...names].slice(0, 50);
+}
+
 function proxyNodeList() {
   return availableProxyNodes().map(({ id, name, source }) => ({ id, name, source }));
 }
 
+function browserRoutePath() {
+  return path.join(app.getPath("userData"), "browser-route.json");
+}
+
+function browserRouteSnapshot() {
+  return { selected: browserRoute, nodes: proxyNodeList(), error: browserRouteError };
+}
+
+async function stopUnauthorizedManagedProxy() {
+  if (!managedProxyState.nodeId?.startsWith("managed:")) return;
+  const account = accountService?.snapshot();
+  if (isManagedNodeAuthorized(account, managedProxyOwnerUserId,
+      managedProxyState.nodeId.slice("managed:".length), id => accountService?.managedNode(id))) return;
+  if (managedProxyState.active || managedProxyChild || managedProxySystemProxy) {
+    await stopManagedProxy("账号线路授权已失效");
+  }
+}
+
+async function revokeManagedRoutesImmediately() {
+  if (browserRouteUsesManagedAccess()) {
+    stopBrowserRouteCore();
+    await applyActiveBrowserProxy();
+  }
+  await stopUnauthorizedManagedProxy();
+}
+
+function browserRouteUsesManagedAccess() {
+  return routeUsesManagedAccess(browserRoute);
+}
+
+async function reconcileBrowserRoute() {
+  if (!browserRouteUsesManagedAccess()) return;
+  const account = accountService?.snapshot();
+  const selectedId = browserRoute.mode === "default" ? accountService.nodeLinks?.[0]?.id
+    : browserRoute.nodeId?.replace(/^managed:/, "");
+  const selectedNode = selectedId && accountService.managedNode(selectedId);
+  if (account?.status !== "signed-in" || !account.entitlement?.active || !selectedNode) {
+    stopBrowserRouteCore();
+    await applyActiveBrowserProxy();
+    browserRouteError = "请先登录并兑换邀请码，才能使用 Drip 线路";
+    connection = { state: "error", label: "尚未授权", detail: browserRouteError, egressIp: null };
+    sendState();
+    return;
+  }
+  if (browserRouteChild && browserRoutePort && isManagedNodeAuthorized(account, browserRouteOwnerUserId,
+      selectedId, id => accountService?.managedNode(id)) &&
+      browserRouteManagedNodeId === selectedId) return;
+  stopBrowserRouteCore();
+  await applyActiveBrowserProxy();
+  try {
+    await selectBrowserRoute(browserRoute, false);
+    connection = { state: "connected", label: "Drip 线路已连接",
+      detail: "当前线路由账号授权管理", egressIp: null };
+  } catch (error) {
+    stopBrowserRouteCore();
+    await applyActiveBrowserProxy();
+    browserRouteError = error.message;
+    connection = { state: "error", label: "线路连接失败", detail: error.message, egressIp: null };
+  }
+  sendState();
+}
+
+function stopBrowserRouteCore() {
+  const child = browserRouteChild;
+  browserRouteChild = null;
+  browserRoutePort = null;
+  browserRouteOwnerUserId = null;
+  browserRouteManagedNodeId = null;
+  if (child && !child.killed) child.kill();
+  try { fs.rmSync(path.join(app.getPath("userData"), "browser-route-runtime", "config.yaml"), { force: true }); } catch {}
+}
+
+async function startBrowserRouteCore(entry) {
+  const mixedPort = await findFreePort();
+  const apiPort = await findFreePort();
+  const apiSecret = crypto.randomBytes(24).toString("hex");
+  const dataPath = path.join(app.getPath("userData"), "browser-route-runtime");
+  fs.mkdirSync(dataPath, { recursive: true });
+  const config = buildProxyConfig({ node: entry.node }, { mixedPort, apiPort, apiSecret, mode: "rule", tun: false });
+  const configPath = path.join(dataPath, "config.yaml");
+  fs.writeFileSync(configPath, yaml.dump(config, { noRefs: true, lineWidth: -1 }), "utf8");
+  const executable = app.isPackaged ? path.join(process.resourcesPath, "app.asar.unpacked", "runtime", "mihomo.exe") : path.join(__dirname, "runtime", "mihomo.exe");
+  if (!fs.existsSync(executable)) throw new Error("代理内核文件不完整");
+  const child = spawn(executable, ["-d", dataPath, "-f", configPath], {
+    cwd: path.dirname(executable), windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
+  });
+  let output = "";
+  const capture = chunk => { output = (output + String(chunk)).slice(-12000); };
+  child.stdout.on("data", capture);
+  child.stderr.on("data", capture);
+  child.on("error", error => capture(error.message));
+  try {
+    await waitForPort(mixedPort, child, 12000, () => output.split(/\r?\n/).findLast(line => /FATAL|ERROR/i.test(line)) || "");
+    await waitForPort(apiPort, child, 12000, () => output.split(/\r?\n/).findLast(line => /FATAL|ERROR/i.test(line)) || "");
+    await selectCoreNode(apiPort, apiSecret, entry.name);
+  } catch (error) {
+    child.kill();
+    throw error;
+  }
+  child.once("exit", () => {
+    if (browserRouteChild !== child || quitting) return;
+    browserRouteChild = null;
+    browserRoutePort = null;
+    browserRouteOwnerUserId = null;
+    browserRouteManagedNodeId = null;
+    browserRouteError = "浏览器节点已断开，请重新选择线路";
+    applyActiveBrowserProxy().catch(() => {});
+    sendState();
+  });
+  return { child, port: mixedPort };
+}
+
+async function selectBrowserRoute(value, persist = true) {
+  const next = normalizeBrowserRoute(value);
+  let running = null;
+  let selectedOwnerUserId = null;
+  let selectedManagedNodeId = null;
+  const accessEpoch = accountAccessEpoch;
+  if (next.mode === "node" || next.mode === "managed" || next.mode === "default") {
+    let entry;
+    if (next.mode === "node") {
+      entry = availableProxyNodes().find(item => item.id === next.nodeId);
+      if (entry?.id.startsWith("managed:")) selectedManagedNodeId = entry.id.slice("managed:".length);
+    }
+    else {
+      const account = accountService?.snapshot();
+      if (account?.status !== "signed-in" || !account.entitlement?.active) throw new Error("请先登录并兑换邀请码，才能使用 Drip 线路");
+      const id = next.mode === "managed" ? next.nodeId.replace(/^managed:/, "") : accountService.nodeLinks?.[0]?.id;
+      const managed = accountService.managedNode(id);
+      if (managed) {
+        selectedManagedNodeId = managed.id;
+        const node = parseSubscription(managed.url).nodes[0];
+        node.name = managed.name;
+        entry = { id: `managed:${managed.id}`, name: managed.name, node };
+      }
+    }
+    if (!entry) throw new Error("授权节点已不存在，请重新选择");
+    if (selectedManagedNodeId) selectedOwnerUserId = accountService?.snapshot().user?.id;
+    running = await startBrowserRouteCore(entry);
+    if (selectedManagedNodeId && (accessEpoch !== accountAccessEpoch ||
+        !isManagedNodeAuthorized(accountService?.snapshot(), selectedOwnerUserId,
+          selectedManagedNodeId, id => accountService?.managedNode(id)))) {
+      running.child.kill();
+      throw new Error("账号线路授权已失效");
+    }
+  }
+  const oldChild = browserRouteChild;
+  const oldPort = browserRoutePort;
+  const previous = browserRoute;
+  const oldOwnerUserId = browserRouteOwnerUserId;
+  const oldManagedNodeId = browserRouteManagedNodeId;
+  browserRoute = next;
+  browserRouteChild = running?.child || null;
+  browserRoutePort = running?.port || null;
+  browserRouteOwnerUserId = selectedOwnerUserId;
+  browserRouteManagedNodeId = selectedManagedNodeId;
+  browserRouteError = null;
+  try {
+    await applyActiveBrowserProxy();
+  } catch (error) {
+    browserRoute = previous;
+    browserRouteChild = oldChild;
+    browserRoutePort = oldPort;
+    browserRouteOwnerUserId = oldOwnerUserId;
+    browserRouteManagedNodeId = oldManagedNodeId;
+    if (running?.child) running.child.kill();
+    await applyActiveBrowserProxy().catch(() => {});
+    throw error;
+  }
+  if (oldChild && oldChild !== running?.child) oldChild.kill();
+  connection = next.mode === "default" || next.mode === "managed" || next.mode === "node"
+    ? { state: "connected", label: "浏览器代理已连接", detail: "当前线路已生效", egressIp: null }
+    : { state: "connected", label: next.mode === "direct" ? "直连" : "系统线路", detail: "浏览器线路已生效", egressIp: null };
+  if (persist) {
+    fs.mkdirSync(app.getPath("userData"), { recursive: true });
+    fs.writeFileSync(browserRoutePath(), JSON.stringify(next), "utf8");
+  }
+  sendState();
+  return browserRouteSnapshot();
+}
+
 function activeBrowserProxyRules() {
-  if (managedProxyState.active && managedProxyPort) return `http://127.0.0.1:${managedProxyPort}`;
-  if (tunnel?.child && tunnel.port) return `http://127.0.0.1:${tunnel.port}`;
+  if (browserRouteChild && browserRoutePort) return `http://127.0.0.1:${browserRoutePort}`;
   return FAIL_CLOSED_PROXY;
 }
 
 async function applyActiveBrowserProxy() {
-  const proxyRules = activeBrowserProxyRules();
+  let options;
+  if (browserRoute.mode === "direct") options = { mode: "direct" };
+  else if (browserRoute.mode === "system") options = { mode: "system" };
+  else {
+    const proxyRules = browserRoute.mode === "manual" ? proxyRulesForManual(browserRoute)
+      : ["node", "managed"].includes(browserRoute.mode) ? (browserRouteChild && browserRoutePort ? `http://127.0.0.1:${browserRoutePort}` : FAIL_CLOSED_PROXY)
+      : activeBrowserProxyRules();
+    options = { mode: "fixed_servers", proxyRules };
+  }
   for (const target of allBrowserSessions()) {
-    await target.setProxy({ mode: "fixed_servers", proxyRules });
+    await target.setProxy(options);
     await target.closeAllConnections();
   }
 }
@@ -688,11 +967,13 @@ async function stopManagedProxy(reason = "代理已停止") {
   try {
     try { await restoreManagedSystemProxy(); } catch (error) { restoreError = error; }
     if (child && !child.killed) child.kill();
+    try { fs.rmSync(path.join(app.getPath("userData"), "proxy-runtime", "config.yaml"), { force: true }); } catch {}
     managedProxyLogStream?.end();
     managedProxyLogStream = null;
     if (!restoreError) managedProxyPort = null;
     managedProxyApiPort = null;
     managedProxyApiSecret = null;
+    managedProxyOwnerUserId = null;
     managedProxyState = {
       ...managedProxyState,
       active: false,
@@ -709,43 +990,62 @@ async function stopManagedProxy(reason = "代理已停止") {
 }
 
 async function startManagedProxy(options = {}) {
-  if (managedProxyState.active) return managedProxyStatus();
+  if (managedProxyState.active) {
+    await stopUnauthorizedManagedProxy();
+    if (managedProxyState.active) return managedProxyStatus();
+  }
   if (managedProxyState.starting) throw new Error("代理正在启动");
   await restoreStaleSystemProxy();
   const nodes = availableProxyNodes();
   const nodeEntry = nodes.find(item => item.id === (options.nodeId || managedProxyState.nodeId)) || (!options.nodeId && nodes[0]);
-  if (!nodeEntry) throw new Error("请先导入日本节点或添加订阅");
+  if (!nodeEntry) throw new Error("请先兑换邀请码或添加订阅");
+  const selectedManagedId = nodeEntry.id.startsWith("managed:") ? nodeEntry.id.slice("managed:".length) : null;
+  const ownerUserId = selectedManagedId ? accountService?.snapshot().user?.id : null;
+  const accessEpoch = accountAccessEpoch;
   const mode = ["rule", "global", "direct"].includes(options.mode) ? options.mode : managedProxyState.mode;
   const systemProxy = options.systemProxy !== false;
   const tun = options.tun === true;
+  const requestedGroup = typeof options.groupName === "string" ? options.groupName.trim().slice(0, 120) : "";
+  if (selectedManagedId && (accessEpoch !== accountAccessEpoch ||
+      !isManagedNodeAuthorized(accountService?.snapshot(), ownerUserId,
+        selectedManagedId, id => accountService?.managedNode(id)))) throw new Error("账号线路授权已失效");
   if (tun && !await isElevated()) {
+    if (selectedManagedId && (accessEpoch !== accountAccessEpoch ||
+        !isManagedNodeAuthorized(accountService?.snapshot(), ownerUserId,
+          selectedManagedId, id => accountService?.managedNode(id)))) throw new Error("账号线路授权已失效");
     if (ELEVATION_NONCE) throw new Error("管理员身份未生效，TUN 没有启动");
-    return restartElevatedForTun({ nodeId: nodeEntry.id, mode, systemProxy, tun });
+    return restartElevatedForTun({ nodeId: nodeEntry.id, groupName: requestedGroup, mode, systemProxy, tun });
   }
-  managedProxyState = { ...managedProxyState, active: false, starting: true, error: null, mode, systemProxy, tun, nodeId: nodeEntry.id, nodeName: nodeEntry.name };
+  managedProxyState = { ...managedProxyState, active: false, starting: true, error: null, mode, systemProxy, tun, nodeId: nodeEntry.id, nodeName: nodeEntry.name, groupName: requestedGroup || managedProxyState.groupName };
+  managedProxyOwnerUserId = ownerUserId;
   sendState();
   try {
     managedProxyPort = await findFreePort();
     managedProxyApiPort = await findFreePort();
     managedProxyApiSecret = crypto.randomBytes(24).toString("hex");
-    const config = buildProxyConfig(nodeEntry.node, {
+    const config = buildProxyConfig(nodeEntry, {
       mixedPort: managedProxyPort,
       apiPort: managedProxyApiPort,
       apiSecret: managedProxyApiSecret,
       mode,
       tun
     });
+    const configuredGroup = Array.isArray(config["proxy-groups"])
+      ? config["proxy-groups"].find(group => group?.name === requestedGroup && Array.isArray(group.proxies) && group.proxies.includes(nodeEntry.name))?.name
+      : "";
+    const groupName = configuredGroup || preferredCoreGroup(config, nodeEntry.name);
+    managedProxyState = { ...managedProxyState, groupName };
     managedProxyRules = summarizeProxyRules(config);
     const runtimeData = path.join(app.getPath("userData"), "proxy-runtime");
     fs.mkdirSync(runtimeData, { recursive: true });
-    const configPath = path.join(runtimeData, "config.json");
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf8");
-    const logPath = path.join(runtimeData, "sing-box.log");
+    const configPath = path.join(runtimeData, "config.yaml");
+    fs.writeFileSync(configPath, yaml.dump(config, { noRefs: true, lineWidth: -1 }), "utf8");
+    const logPath = path.join(runtimeData, "mihomo.log");
     managedProxyLogStream = fs.createWriteStream(logPath, { flags: "w" });
-    const executable = app.isPackaged ? path.join(process.resourcesPath, "app.asar.unpacked", "runtime", "sing-box.exe") : path.join(__dirname, "runtime", "sing-box.exe");
+    const executable = app.isPackaged ? path.join(process.resourcesPath, "app.asar.unpacked", "runtime", "mihomo.exe") : path.join(__dirname, "runtime", "mihomo.exe");
     const runtimeDirectory = path.dirname(executable);
     if (!fs.existsSync(executable)) throw new Error("代理内核文件不完整");
-    managedProxyChild = spawn(executable, ["run", "-c", configPath], { cwd: runtimeDirectory, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    managedProxyChild = spawn(executable, ["-d", runtimeData, "-f", configPath], { cwd: runtimeDirectory, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let startupOutput = "";
     const captureOutput = chunk => { startupOutput = (startupOutput + String(chunk)).slice(-12000); };
     const failureDetail = () => {
@@ -768,10 +1068,17 @@ async function startManagedProxy(options = {}) {
     });
     await waitForPort(managedProxyPort, managedProxyChild, 12000, failureDetail);
     await waitForPort(managedProxyApiPort, managedProxyChild, 12000, failureDetail);
+    await selectCoreNode(managedProxyApiPort, managedProxyApiSecret, nodeEntry.name, groupName);
+    if (selectedManagedId && (accessEpoch !== accountAccessEpoch ||
+        !isManagedNodeAuthorized(accountService?.snapshot(), ownerUserId,
+          selectedManagedId, id => accountService?.managedNode(id)))) throw new Error("账号线路授权已失效");
     trafficTracker().beginRun();
     managedProxyStatsError = null;
     managedProxyState = { ...managedProxyState, active: true, starting: false, error: null };
     if (systemProxy) await enableManagedSystemProxy(managedProxyPort);
+    if (selectedManagedId && (accessEpoch !== accountAccessEpoch ||
+        !isManagedNodeAuthorized(accountService?.snapshot(), ownerUserId,
+          selectedManagedId, id => accountService?.managedNode(id)))) throw new Error("账号线路授权已失效");
     await applyActiveBrowserProxy();
     managedProxyStatsTimer = setInterval(() => {
       managedProxyStats().then(() => { managedProxyStatsError = null; })
@@ -1031,13 +1338,7 @@ async function failClosed(reason) {
     sendState();
     return;
   }
-  for (const target of allBrowserSessions()) {
-    await target.setProxy({
-      mode: "fixed_servers",
-      proxyRules: FAIL_CLOSED_PROXY
-    });
-    await target.closeAllConnections();
-  }
+  await applyActiveBrowserProxy();
   connection = {
     state: "error",
     label: "服务器断开",
@@ -1071,12 +1372,14 @@ async function startTunnel() {
     const port = await tunnel.start();
     await applyActiveBrowserProxy();
 
-    const proxyResolution = await browserSession.resolveProxy("https://api.ipify.org/");
+    const verificationSession = session.fromPartition("drip-tunnel-verification");
+    await verificationSession.setProxy({ mode: "fixed_servers", proxyRules: `http://127.0.0.1:${port}` });
+    const proxyResolution = await verificationSession.resolveProxy("https://api.ipify.org/");
     if (!proxyResolution.includes(`127.0.0.1:${port}`)) {
       throw new Error(`浏览器未采用专属代理：${proxyResolution}`);
     }
 
-    const response = await browserSession.fetch("https://api.ipify.org/", {
+    const response = await verificationSession.fetch("https://api.ipify.org/", {
       cache: "no-store",
       signal: AbortSignal.timeout(15000)
     });
@@ -2248,6 +2551,7 @@ function stateSnapshot() {
     },
     activeTabId,
     connection,
+    browserRoute: browserRouteSnapshot(),
     appearance: appearanceSettings,
     window: {
       isMaximized: Boolean(mainWindow?.isMaximized())
@@ -2338,6 +2642,12 @@ function installIpcHandlers() {
     validate(event);
     return stateSnapshot();
   });
+  ipcMain.handle("browser:set-route", (event, value) => {
+    validate(event);
+    const change = browserRouteChange.then(() => selectBrowserRoute(value));
+    browserRouteChange = change.catch(() => {});
+    return change;
+  });
   ipcMain.handle("settings:get", event => {
     validateTab(event);
     return { ...browserData.settings };
@@ -2368,13 +2678,13 @@ function installIpcHandlers() {
     else throw new Error("Invalid window action");
     return { ok: true };
   });
-  ipcMain.handle("proxy:node-status", event => {
-    validateProxy(event);
-    return proxyNodeStore.status();
-  });
   ipcMain.handle("proxy:nodes", event => {
     validateProxy(event);
     return proxyNodeList();
+  });
+  ipcMain.handle("proxy:groups", event => {
+    validateProxy(event);
+    return availableProxyGroups();
   });
   ipcMain.handle("proxy:status", event => {
     validateProxy(event);
@@ -2406,6 +2716,7 @@ function installIpcHandlers() {
     const input = options && typeof options === "object" ? options : {};
     return startManagedProxy({
       nodeId: typeof input.nodeId === "string" ? input.nodeId.slice(0, 120) : undefined,
+      groupName: typeof input.groupName === "string" ? input.groupName.slice(0, 120) : undefined,
       mode: typeof input.mode === "string" ? input.mode : undefined,
       systemProxy: input.systemProxy !== false,
       tun: input.tun === true
@@ -2415,10 +2726,6 @@ function installIpcHandlers() {
     validateProxy(event);
     await stopManagedProxy();
     return managedProxyStatus();
-  });
-  ipcMain.handle("proxy:import-japan", event => {
-    validateProxy(event);
-    return proxyNodeStore.importJapan();
   });
   ipcMain.handle("proxy:subscriptions", event => {
     validateProxy(event);
@@ -2513,7 +2820,8 @@ function installIpcHandlers() {
   });
   ipcMain.handle("browser:retry-tunnel", async event => {
     validate(event);
-    await startTunnel();
+    await accountService?.refreshManagedAccess();
+    await reconcileBrowserRoute();
   });
   ipcMain.handle("browser:set-overlay-open", (event, open) => {
     validate(event);
@@ -2814,22 +3122,43 @@ function installIpcHandlers() {
   });
   ipcMain.handle("browser:account-login", async (event, credentials) => {
     validate(event);
-    return accountService.login(
+    const login = accountService.login(
       String(credentials?.username || "").slice(0, 64),
       String(credentials?.password || "").slice(0, 160)
     );
+    await revokeManagedRoutesImmediately();
+    const result = await login;
+    await reconcileBrowserRoute();
+    await stopUnauthorizedManagedProxy();
+    return result;
   });
   ipcMain.handle("browser:account-register", async (event, account) => {
     validate(event);
-    return accountService.register(
+    const register = accountService.register(
       String(account?.username || "").slice(0, 64),
       String(account?.displayName || "").slice(0, 48),
       String(account?.password || "").slice(0, 160)
     );
+    await revokeManagedRoutesImmediately();
+    const result = await register;
+    await reconcileBrowserRoute();
+    await stopUnauthorizedManagedProxy();
+    return result;
+  });
+  ipcMain.handle("browser:account-redeem", async (event, code) => {
+    validate(event);
+    const result = await accountService.redeem(String(code || "").slice(0, 100));
+    await reconcileBrowserRoute();
+    return result;
   });
   ipcMain.handle("browser:account-update-profile", async (event, displayName) => {
     validate(event);
     return accountService.updateProfile(String(displayName || "").slice(0, 48));
+  });
+  ipcMain.handle("browser:account-update-avatar", async (event, avatarData) => {
+    validate(event);
+    if (typeof avatarData !== "string" || avatarData.length > 90000) throw new Error("头像文件过大");
+    return accountService.updateAvatar(avatarData);
   });
   ipcMain.handle("browser:account-change-password", async (event, passwords) => {
     validate(event);
@@ -2840,7 +3169,12 @@ function installIpcHandlers() {
   });
   ipcMain.handle("browser:account-logout", async event => {
     validate(event);
-    return accountService.logout();
+    const logout = accountService.logout();
+    await revokeManagedRoutesImmediately();
+    await browserRouteChange;
+    await reconcileBrowserRoute();
+    await stopUnauthorizedManagedProxy();
+    return logout;
   });
   ipcMain.handle("browser:account-devices", async event => {
     validate(event);
@@ -3304,6 +3638,8 @@ async function startApplication() {
   registerLocalProtocol();
   await restoreStaleSystemProxy().catch(() => {});
   loadBrowserData();
+  try { browserRoute = normalizeBrowserRoute(JSON.parse(fs.readFileSync(browserRoutePath(), "utf8"))); } catch {}
+  if (browserRoute.mode === "node" && browserRoute.nodeId === "local") browserRoute = { mode: "default" };
   proxyNodeStore = new ProxyNodeStore({
     safeStorage,
     userDataPath: app.getPath("userData"),
@@ -3316,12 +3652,20 @@ async function startApplication() {
   proxySubscriptionStore = new ProxySubscriptionStore({
     safeStorage,
     userDataPath: app.getPath("userData"),
-    fetcher: (url, options) => browserSession.fetch(url, options)
+    fetcher: (url, options) => electronNet.fetch(url, options)
   });
   accountService = new AccountService({
-    session: browserSession,
+    session: session.fromPartition("persist:drip-account"),
     userDataPath: app.getPath("userData"),
-    onChange: sendState
+    onChange: state => {
+      const fingerprint = JSON.stringify([state.status, state.user?.id, state.entitlement?.active,
+        state.managedNodes?.map(node => node.id)]);
+      if (fingerprint !== accountAccessFingerprint) {
+        accountAccessFingerprint = fingerprint;
+        accountAccessEpoch += 1;
+      }
+      sendState();
+    }
   });
   updateManager = new UpdateManager({
     getWindow: () => mainWindow,
@@ -3332,6 +3676,7 @@ async function startApplication() {
   for (const target of allBrowserSessions()) {
     await target.setProxy({ mode: "fixed_servers", proxyRules: FAIL_CLOSED_PROXY });
   }
+  if (browserRoute.mode !== "node") await applyActiveBrowserProxy();
   installIpcHandlers();
 
   // 首帧先行：立即创建窗口并加载本地主页（liquid://home 走自定义协议，不经过代理），
@@ -3364,7 +3709,23 @@ async function startApplication() {
     return;
   }
 
-  const tunnelPromise = startTunnel();
+  const tunnelPromise = SELF_TEST ? startTunnel() : accountService.restore().then(async () => {
+    await reconcileBrowserRoute();
+    updateManager?.schedule();
+    const interval = setInterval(() => (async () => {
+      await accountService.refreshManagedAccess();
+      if (browserRouteUsesManagedAccess()) await reconcileBrowserRoute();
+      await stopUnauthorizedManagedProxy();
+    })().catch(error => console.error("授权状态刷新失败:", error)), 60000);
+    interval.unref();
+  });
+  if (["node"].includes(browserRoute.mode)) {
+    const savedRoute = browserRoute;
+    browserRouteChange = selectBrowserRoute(savedRoute, false).catch(error => {
+      browserRouteError = error.message;
+      sendState();
+    });
+  }
   const extensionsPromise = loadPersistedExtensions();
 
   if (SELF_TEST) {
@@ -3441,6 +3802,7 @@ app.on("before-quit", event => {
   captureSession();
   saveBrowserData();
   updateManager?.dispose();
+  stopBrowserRouteCore();
   tunnel?.stop();
 });
 

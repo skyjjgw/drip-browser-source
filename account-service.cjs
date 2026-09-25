@@ -14,12 +14,15 @@ class AccountService {
     this.sessionPath = path.join(userDataPath, "account-session.json");
     this.token = "";
     this.refreshToken = "";
+    this.authEpoch = 0;
     this.deviceId = crypto.randomUUID();
     this.state = {
       status: "signed-out",
       busy: false,
       user: null,
-      error: null
+      error: null,
+      entitlement: null,
+      managedNodes: []
     };
     this.loadCredentials();
   }
@@ -131,18 +134,29 @@ class AccountService {
   }
 
   async restore() {
-    if (!this.token) return this.emit({ status: "signed-out", busy: false, user: null, error: null });
+    this.authEpoch += 1;
+    if (!this.token) {
+      this.nodeLinks = [];
+      return this.emit({ status: "signed-out", busy: false, user: null, entitlement: null, managedNodes: [], error: null });
+    }
     this.emit({ status: "restoring", busy: true, error: null });
     try {
       const payload = await this.request("/me");
-      return this.emit({ status: "signed-in", busy: false, user: payload.user, error: null });
+      this.emit({ status: "signed-in", busy: false, user: payload.user, error: null });
+      await this.refreshManagedAccess();
+      return this.snapshot();
     } catch (error) {
       if (error.status === 401) this.saveCredentials("", "");
-      return this.emit({ status: "signed-out", busy: false, user: null, error: error.message });
+      this.nodeLinks = [];
+      return this.emit({ status: "signed-out", busy: false, user: null, entitlement: null, managedNodes: [], error: error.message });
     }
   }
 
   async login(username, password) {
+    this.authEpoch += 1;
+    this.saveCredentials("", "");
+    this.nodeLinks = [];
+    this.emit({ status: "signed-out", user: null, entitlement: null, managedNodes: [] });
     this.emit({ busy: true, error: null });
     try {
       const payload = await this.request("/login", {
@@ -151,13 +165,19 @@ class AccountService {
         body: { username, password, deviceId: this.deviceId }
       });
       this.saveCredentials(payload.token, payload.refreshToken);
-      return this.emit({ status: "signed-in", busy: false, user: payload.user, error: null });
+      this.emit({ status: "signed-in", busy: false, user: payload.user, error: null });
+      await this.refreshManagedAccess();
+      return this.snapshot();
     } catch (error) {
       return this.emit({ status: "signed-out", busy: false, user: null, error: error.message });
     }
   }
 
   async register(username, displayName, password) {
+    this.authEpoch += 1;
+    this.saveCredentials("", "");
+    this.nodeLinks = [];
+    this.emit({ status: "signed-out", user: null, entitlement: null, managedNodes: [] });
     this.emit({ busy: true, error: null });
     try {
       const payload = await this.request("/register", {
@@ -166,7 +186,9 @@ class AccountService {
         body: { username, displayName, password, deviceId: this.deviceId }
       });
       this.saveCredentials(payload.token, payload.refreshToken);
-      return this.emit({ status: "signed-in", busy: false, user: payload.user, error: null });
+      this.emit({ status: "signed-in", busy: false, user: payload.user, error: null });
+      await this.refreshManagedAccess();
+      return this.snapshot();
     } catch (error) {
       return this.emit({ status: "signed-out", busy: false, user: null, error: error.message });
     }
@@ -183,6 +205,18 @@ class AccountService {
     }
   }
 
+  async updateAvatar(avatarData) {
+    if (!this.token) return this.emit({ error: "请先登录" });
+    this.emit({ busy: true, error: null, notice: null });
+    try {
+      const payload = await this.request("/avatar", { method: "POST", body: { avatarData } });
+      return this.emit({ status: "signed-in", busy: false, user: payload.user,
+        error: null, notice: avatarData ? "头像已更新" : "头像已移除" });
+    } catch (error) {
+      return this.emit({ busy: false, error: error.message, notice: null });
+    }
+  }
+
   async changePassword(currentPassword, newPassword) {
     if (!this.token) return this.emit({ error: "请先登录" });
     this.emit({ busy: true, error: null });
@@ -195,10 +229,48 @@ class AccountService {
   }
 
   async logout() {
-    this.emit({ busy: true, error: null });
-    try { await this.request("/logout", { method: "POST", body: {} }); } catch {}
+    this.authEpoch += 1;
+    const token = this.token;
     this.saveCredentials("", "");
-    return this.emit({ status: "signed-out", busy: false, user: null, error: null, notice: null });
+    this.nodeLinks = [];
+    const state = this.emit({ status: "signed-out", busy: false, user: null, entitlement: null, managedNodes: [], error: null, notice: null });
+    if (token) {
+      try {
+        await this.session.fetch(`${this.apiBase}/logout`, {
+          method: "POST", headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+          cache: "no-store", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        });
+      } catch {}
+    }
+    return state;
+  }
+
+  async refreshManagedAccess() {
+    if (!this.token || this.state.status !== "signed-in") return this.snapshot();
+    const epoch = this.authEpoch;
+    const userId = this.state.user?.id;
+    try {
+      const grant = (await this.request("/entitlement")).entitlement;
+      const nodes = grant?.active ? (await this.request("/managed-nodes")).nodes || [] : [];
+      if (this.authEpoch !== epoch || this.state.status !== "signed-in" || this.state.user?.id !== userId) return this.snapshot();
+      this.nodeLinks = nodes;
+      return this.emit({ entitlement: grant, managedNodes: nodes.map(({ id, name }) => ({ id, name })), error: null });
+    } catch (error) {
+      if (this.authEpoch !== epoch || this.state.status !== "signed-in" || this.state.user?.id !== userId) return this.snapshot();
+      this.nodeLinks = [];
+      return this.emit({ entitlement: null, managedNodes: [], error: error.message });
+    }
+  }
+
+  async redeem(code) {
+    if (!this.token) throw new Error("请先登录");
+    await this.request("/redeem", { method: "POST", body: { code } });
+    const state = await this.refreshManagedAccess();
+    return state.error ? state : this.emit({ notice: "兑换成功，节点、流量和有效期已更新" });
+  }
+
+  managedNode(id) {
+    return this.nodeLinks?.find(node => node.id === id) || null;
   }
 
   async listDevices() {

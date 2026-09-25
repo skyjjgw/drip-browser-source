@@ -12,6 +12,27 @@
 .side-status .live-dot { background: #a6b7c9; box-shadow: none; }
 .side-status strong { color: #d1dfec; }
 .node-idle { color: #acc1d5; font-size: 11px; }
+.node-picker { position: relative; z-index: 4; }
+.node-select-stack { display: grid; gap: 9px; margin-top: 10px; }
+.node-select-field { position: relative; z-index: 3; }
+.node-select-field:focus-within { z-index: 6; }
+.node-select-label { position: absolute; z-index: 2; top: -6px; left: 10px; padding: 0 4px; background: rgba(25, 48, 72, .94); color: #9fc3ea; font-size: 10px; line-height: 12px; }
+.node-select-trigger { width: 100%; min-height: 39px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 11px; border: 1px solid rgba(190, 220, 249, .3); border-radius: 5px; background: rgba(10, 28, 47, .35); color: #edf6ff; text-align: left; }
+.node-select-trigger:hover, .node-select-trigger:focus-visible { border-color: #70aaff; background: rgba(74, 132, 205, .18); }
+.node-select-trigger:disabled { cursor: not-allowed; opacity: .82; }
+.node-select-trigger .icon { width: 15px; height: 15px; color: #a9c7e5; }
+.node-picker-chevron { margin-left: 2px; color: #b8d3ee; }
+.node-picker-menu { position: absolute; top: calc(100% + 7px); left: 0; right: 0; z-index: 20; max-height: 246px; overflow-y: auto; padding: 5px; border: 1px solid rgba(184, 216, 250, .28); border-radius: 7px; background: rgba(13, 33, 55, .97); box-shadow: 0 18px 38px rgba(0, 0, 0, .36); backdrop-filter: blur(20px); }
+.node-picker-option { width: 100%; min-height: 49px; display: flex; align-items: center; gap: 9px; padding: 7px 9px; border: 0; border-radius: 5px; background: transparent; color: #e8f3ff; text-align: left; }
+.node-picker-option:hover, .node-picker-option.selected { background: rgba(91, 154, 230, .22); }
+.node-picker-option .picker-icon { width: 30px; height: 30px; }
+.node-picker-copy { min-width: 0; flex: 1; }
+.node-picker-copy strong, .node-picker-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-picker-copy strong { font-size: 11px; font-weight: 600; }
+.node-picker-copy small { margin-top: 3px; color: #9db6cd; font-size: 10px; }
+.node-picker-option .picker-check { width: 15px; height: 15px; color: #8ce3ca; }
+.node-picker-option:not(.selected) .picker-check { color: #718ba5; }
+.node-picker-empty { padding: 20px 12px; color: #9fb6cb; text-align: center; font-size: 11px; }
 #subscription-meter { width: 0; }
 .ghost-btn:disabled, .segment button:disabled, .switch:disabled { cursor: not-allowed; opacity: .68; }
 .local-node-frame { margin-top: 12px; }

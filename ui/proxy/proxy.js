@@ -13,6 +13,12 @@ const subscriptionForm = document.getElementById("subscription-form");
 const subscriptionList = document.getElementById("subscription-list");
 const subscriptionMessage = document.getElementById("subscription-message");
 const nodeList = document.getElementById("node-list");
+const homeGroupPicker = document.getElementById("home-group-picker");
+const homeGroupTrigger = document.getElementById("home-group-trigger");
+const homeGroupMenu = document.getElementById("home-group-menu");
+const homeNodePicker = document.getElementById("home-node-picker");
+const homeNodeTrigger = document.getElementById("home-node-trigger");
+const homeNodeMenu = document.getElementById("home-node-menu");
 const runtimeToggle = document.getElementById("runtime-toggle");
 const runtimeBadge = document.getElementById("runtime-badge");
 const systemProxySwitch = document.getElementById("system-proxy-switch");
@@ -20,10 +26,11 @@ const tunSwitch = document.getElementById("tun-switch");
 const settingsSystemProxy = document.getElementById("settings-system-proxy");
 const settingsTun = document.getElementById("settings-tun");
 const modeNote = document.getElementById("mode-note");
-let localNode = { imported: false };
 let subscriptions = [];
 let nodes = [];
-let selectedNodeId = "local";
+let selectedNodeId = "";
+let proxyGroups = ["PROXY"];
+let selectedGroupName = "PROXY";
 let preferences = { mode: "rule", systemProxy: true, tun: false };
 let runtime = { active: false, starting: false, error: null };
 let statsPolling = false;
@@ -68,6 +75,8 @@ function setSwitch(element, value, disabled = false) {
 
 function syncControls() {
   const locked = runtime.active || runtime.starting || runtime.restarting;
+  if (homeGroupTrigger) homeGroupTrigger.disabled = locked;
+  if (homeNodeTrigger) homeNodeTrigger.disabled = locked;
   setSwitch(systemProxySwitch, preferences.systemProxy, locked);
   setSwitch(tunSwitch, preferences.tun, locked);
   setSwitch(settingsSystemProxy, preferences.systemProxy, locked);
@@ -86,9 +95,10 @@ function syncControls() {
 function updateNodeSummary() {
   const selected = nodes.find(node => node.id === selectedNodeId);
   document.getElementById("home-node-name").textContent = selected?.name || "暂无节点";
+  document.getElementById("home-node-choice").textContent = selected?.name || "暂无节点";
   document.getElementById("home-node-detail").textContent = selected
     ? `${selected.source} · ${runtime.active ? "已连接" : "未连接"}`
-    : "请先导入节点";
+    : "请先兑换邀请码或添加订阅";
   document.getElementById("home-node-state").textContent = runtime.active ? "运行中" : selected ? "未连接" : "未导入";
 }
 
@@ -96,15 +106,113 @@ function syncDelayButtons() {
   const enabled = nodes.length > 0 && !runtime.starting && !runtime.restarting && !latencyTesting;
   for (const button of document.querySelectorAll(".delay-button")) {
     button.disabled = !enabled;
-    button.title = enabled ? "测试选中的节点" : nodes.length ? "请等待当前操作完成" : "请先导入节点";
+    button.title = enabled ? "测试选中的节点" : nodes.length ? "请等待当前操作完成" : "请先兑换邀请码或添加订阅";
   }
+}
+
+function closePicker(menu, trigger) {
+  if (!menu || !trigger) return;
+  menu.hidden = true;
+  trigger.setAttribute("aria-expanded", "false");
+}
+
+function closeNodePicker() {
+  closePicker(homeGroupMenu, homeGroupTrigger);
+  closePicker(homeNodeMenu, homeNodeTrigger);
+}
+
+function togglePicker(menu, trigger) {
+  if (!menu || !trigger) return;
+  const open = menu.hidden;
+  closeNodePicker();
+  menu.hidden = !open;
+  trigger.setAttribute("aria-expanded", String(open));
+}
+
+function renderGroupPicker() {
+  if (!homeGroupMenu) return;
+  homeGroupMenu.replaceChildren();
+  for (const groupName of proxyGroups) {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = `node-picker-option${groupName === selectedGroupName ? " selected" : ""}`;
+    option.dataset.groupName = groupName;
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", String(groupName === selectedGroupName));
+    const symbol = document.createElement("span");
+    symbol.className = "row-icon teal picker-icon";
+    symbol.append(icon("layers-3"));
+    const copy = document.createElement("span");
+    copy.className = "node-picker-copy";
+    const name = document.createElement("strong");
+    name.textContent = groupName;
+    const source = document.createElement("small");
+    source.textContent = "策略组";
+    copy.append(name, source);
+    const check = icon(groupName === selectedGroupName ? "check" : "circle");
+    check.classList.add("picker-check");
+    option.append(symbol, copy, check);
+    homeGroupMenu.append(option);
+  }
+  document.getElementById("home-group-choice").textContent = selectedGroupName;
+  window.lucide?.createIcons({ nodes: [homeGroupMenu] });
+}
+
+function renderNodePicker() {
+  if (!homeNodeMenu) return;
+  homeNodeMenu.replaceChildren();
+  if (!nodes.length) {
+    const empty = document.createElement("div");
+    empty.className = "node-picker-empty";
+    empty.textContent = "暂无可用节点，请先兑换邀请码或添加订阅";
+    homeNodeMenu.append(empty);
+    return;
+  }
+  for (const entry of nodes) {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = `node-picker-option${entry.id === selectedNodeId ? " selected" : ""}`;
+    option.dataset.nodeId = entry.id;
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", String(entry.id === selectedNodeId));
+    const symbol = document.createElement("span");
+    symbol.className = "row-icon teal picker-icon";
+    symbol.append(icon("wifi"));
+    const copy = document.createElement("span");
+    copy.className = "node-picker-copy";
+    const name = document.createElement("strong");
+    name.textContent = entry.name;
+    const source = document.createElement("small");
+    source.textContent = entry.source || "已保存节点";
+    copy.append(name, source);
+    const check = icon(entry.id === selectedNodeId ? "check" : "circle");
+    check.classList.add("picker-check");
+    option.append(symbol, copy, check);
+    homeNodeMenu.append(option);
+  }
+  window.lucide?.createIcons({ nodes: [homeNodeMenu] });
+}
+
+function selectNode(nodeId) {
+  if (!nodes.some(node => node.id === nodeId)) return;
+  selectedNodeId = nodeId;
+  renderNodes();
+  closeNodePicker();
+}
+
+function selectGroup(groupName) {
+  if (!proxyGroups.includes(groupName)) return;
+  selectedGroupName = groupName;
+  renderGroupPicker();
+  closeNodePicker();
 }
 
 function renderNodes() {
   nodeList.className = nodes.length ? "saved-node-list" : "empty";
   nodeList.replaceChildren();
   if (!nodes.length) {
-    nodeList.textContent = "暂无已保存节点，请先导入配置或添加订阅";
+    nodeList.textContent = "暂无可用节点，请先兑换邀请码或添加订阅";
+    renderNodePicker();
     updateNodeSummary();
     syncDelayButtons();
     return;
@@ -131,6 +239,7 @@ function renderNodes() {
     row.append(symbol, copy, state);
     nodeList.append(row);
   }
+  renderNodePicker();
   updateNodeSummary();
   syncDelayButtons();
   window.lucide?.createIcons({ nodes: [nodeList] });
@@ -145,14 +254,6 @@ async function refreshNodes() {
     nodes = [];
     renderNodes();
   }
-}
-
-function renderLocalNode(status) {
-  localNode = status;
-  const detail = status.error || (status.imported ? "已导入 · 可用于启动代理" : "未导入 · 代理未启用");
-  document.getElementById("local-node-detail").textContent = detail;
-  document.getElementById("import-node").querySelector("span").textContent = status.imported ? "重新导入" : "从 Clash Verge 导入";
-  refreshNodes();
 }
 
 function showSubscriptionMessage(message, error = false) {
@@ -222,6 +323,10 @@ function renderRuntime(status) {
   if ((active || starting) && runtime.nodeId && runtime.nodeId !== selectedNodeId) {
     selectedNodeId = runtime.nodeId;
     if (nodes.length) renderNodes();
+  }
+  if ((active || starting) && runtime.groupName && proxyGroups.includes(runtime.groupName)) {
+    selectedGroupName = runtime.groupName;
+    renderGroupPicker();
   }
   runtimeBadge.textContent = starting ? "正在启动" : active ? "代理运行中" : runtime.error ? "启动失败" : "代理未启用";
   if (runtime.restarting) runtimeBadge.textContent = "正在请求管理员权限";
@@ -386,18 +491,46 @@ settingsTun.addEventListener("click", () => togglePreference("tun"));
 nodeList.addEventListener("click", event => {
   const row = event.target.closest("[data-node-id]");
   if (!row || runtime.active || runtime.starting || runtime.restarting) return;
-  selectedNodeId = row.dataset.nodeId;
-  renderNodes();
+  selectNode(row.dataset.nodeId);
+});
+
+homeNodeTrigger?.addEventListener("click", event => {
+  event.stopPropagation();
+  if (runtime.active || runtime.starting || runtime.restarting || !nodes.length) return;
+  togglePicker(homeNodeMenu, homeNodeTrigger);
+});
+homeGroupTrigger?.addEventListener("click", event => {
+  event.stopPropagation();
+  if (runtime.active || runtime.starting || runtime.restarting || !proxyGroups.length) return;
+  togglePicker(homeGroupMenu, homeGroupTrigger);
+});
+homeNodeMenu?.addEventListener("click", event => {
+  const option = event.target.closest("[data-node-id]");
+  if (!option || runtime.active || runtime.starting || runtime.restarting) return;
+  selectNode(option.dataset.nodeId);
+});
+homeGroupMenu?.addEventListener("click", event => {
+  const option = event.target.closest("[data-group-name]");
+  if (!option || runtime.active || runtime.starting || runtime.restarting) return;
+  selectGroup(option.dataset.groupName);
+});
+document.addEventListener("click", event => {
+  if (!homeNodePicker?.contains(event.target) && !homeGroupPicker?.contains(event.target)) closeNodePicker();
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") closeNodePicker();
 });
 
 runtimeToggle.addEventListener("click", async () => {
   if (!api || runtime.starting || runtime.restarting) return;
   runtimeToggle.disabled = true;
   try {
-    renderRuntime({ ...runtime, starting: !runtime.active, error: null });
+    const selected = nodes.find(node => node.id === selectedNodeId);
+    renderRuntime({ ...runtime, starting: !runtime.active, error: null,
+      nodeId: selectedNodeId, nodeName: selected?.name || runtime.nodeName, groupName: selectedGroupName });
     const status = runtime.active
       ? await api.stop()
-      : await api.start({ nodeId: selectedNodeId, mode: preferences.mode, systemProxy: preferences.systemProxy, tun: preferences.tun });
+      : await api.start({ nodeId: selectedNodeId, groupName: selectedGroupName, mode: preferences.mode, systemProxy: preferences.systemProxy, tun: preferences.tun });
     renderRuntime(status);
     refreshTraffic();
   } catch (error) {
@@ -409,10 +542,14 @@ runtimeToggle.addEventListener("click", async () => {
 
 if (api) {
   api.onStatus?.(renderRuntime);
-  api.nodeStatus().then(renderLocalNode).catch(() => {
-    document.getElementById("local-node-detail").textContent = "暂时无法读取本机节点";
-  });
+  refreshNodes();
   api.subscriptions().then(renderSubscriptions).catch(() => showSubscriptionMessage("无法读取已保存的订阅", true));
+  api.groups?.().then(items => {
+    proxyGroups = Array.isArray(items) && items.length ? items : ["PROXY"];
+    if (!proxyGroups.includes(selectedGroupName)) selectedGroupName = proxyGroups[0];
+    renderGroupPicker();
+  }).catch(() => renderGroupPicker());
+  renderGroupPicker();
   api.status().then(renderRuntime).catch(() => {});
   refreshTraffic();
   setInterval(refreshTraffic, 1000);
@@ -438,15 +575,6 @@ document.querySelectorAll(".delay-button").forEach(button => {
       syncDelayButtons();
     }
   });
-});
-
-document.getElementById("import-node").addEventListener("click", async event => {
-  if (!api || runtime.active) return;
-  const button = event.currentTarget;
-  button.disabled = true;
-  try { renderLocalNode(await api.importJapan()); }
-  catch (error) { document.getElementById("local-node-detail").textContent = error.message || "导入失败"; }
-  finally { button.disabled = false; }
 });
 
 subscriptionForm.addEventListener("submit", async event => {

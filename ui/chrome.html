@@ -47,6 +47,7 @@
       </form>
       <div class="toolbar-actions">
         <button class="icon-button" id="bookmarkPage" type="button" title="收藏此页" aria-label="收藏此页"><i data-lucide="star"></i></button>
+        <button class="icon-button browser-route-button" id="browserRouteButton" type="button" title="浏览器代理" aria-label="选择浏览器代理" aria-haspopup="true" aria-expanded="false"><i data-lucide="route"></i></button>
         <button class="icon-button" id="themeButton" type="button" title="切换深浅主题" aria-label="切换深浅主题"><i data-lucide="sun"></i></button>
         <button class="icon-button" id="appearanceButton" type="button" title="外观设置" aria-label="外观设置"><i data-lucide="palette"></i></button>
         <button class="icon-button" id="downloadsButton" type="button" title="下载内容" aria-label="下载内容"><i data-lucide="download"></i></button>
@@ -62,6 +63,22 @@
       <button class="mini-button" id="findNext" type="button" title="下一个" aria-label="下一个"><i data-lucide="chevron-down"></i></button>
       <button class="mini-button" id="closeFind" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
     </form>
+  </div>
+
+  <div class="browser-route-overlay" id="browserRouteOverlay" hidden>
+    <button class="browser-route-scrim" id="browserRouteScrim" type="button" aria-label="关闭浏览器代理选择"></button>
+    <section class="browser-route-panel" aria-label="浏览器代理选择">
+      <div class="browser-route-heading"><i data-lucide="route"></i><strong>浏览器代理</strong><span>仅 Drip 网页</span></div>
+      <div class="browser-route-options" id="browserRouteOptions"></div>
+      <button class="browser-route-add" id="browserRouteAdd" type="button"><i data-lucide="plus"></i>添加 HTTP / SOCKS5 代理</button>
+      <form class="browser-route-form" id="browserRouteForm" hidden>
+        <select name="protocol" aria-label="代理协议"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select>
+        <input name="host" type="text" autocomplete="off" placeholder="服务器地址" aria-label="代理服务器地址" required>
+        <input name="port" type="number" min="1" max="65535" placeholder="端口" aria-label="代理端口" required>
+        <button type="submit">使用此代理</button>
+      </form>
+      <p class="browser-route-error" id="browserRouteError" role="alert" hidden></p>
+    </section>
   </div>
 
   <div class="module-overlay" id="moduleOverlay" hidden>

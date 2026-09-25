@@ -2,11 +2,14 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const yaml = require("js-yaml");
-const { validateNode } = require("./proxy-node-store.cjs");
 
 const MAX_SUBSCRIPTIONS = 10;
-const MAX_NODES = 200;
+const MAX_NODES = 500;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+function copyJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
 
 function parseVlessUri(line) {
   const uri = new URL(line.trim());
@@ -30,9 +33,13 @@ function parseVlessUri(line) {
 
 function parseSubscription(text) {
   let candidates = [];
+  let profile = null;
   try {
     const document = yaml.load(text, { schema: yaml.JSON_SCHEMA });
-    if (Array.isArray(document?.proxies)) candidates = document.proxies;
+    if (Array.isArray(document?.proxies)) {
+      candidates = document.proxies;
+      profile = copyJson(document);
+    }
   } catch {}
   if (!candidates.length) {
     let input = text.trim();
@@ -44,15 +51,23 @@ function parseSubscription(text) {
     candidates = candidates.map(line => {
       try { return parseVlessUri(line); } catch { return null; }
     });
+    profile = { proxies: candidates.filter(Boolean) };
   }
   const nodes = [];
   let skipped = 0;
   for (const candidate of candidates) {
     if (nodes.length >= MAX_NODES) { skipped += 1; continue; }
-    try { nodes.push(validateNode(candidate)); } catch { skipped += 1; }
+    try {
+      if (!candidate || typeof candidate !== "object" || typeof candidate.name !== "string" ||
+          !candidate.name.trim() || candidate.name.length > 120 || typeof candidate.type !== "string" ||
+          candidate.type.length > 40) throw new Error("Invalid proxy");
+      nodes.push(copyJson({ ...candidate, name: candidate.name.trim() }));
+    } catch { skipped += 1; }
   }
-  if (!nodes.length) throw new Error("订阅中没有可导入的 VLESS TCP Reality 节点");
-  return { nodes, skipped };
+  if (!nodes.length) throw new Error("订阅中没有可导入的 Clash/Mihomo 节点");
+  if (!profile) profile = { proxies: nodes };
+  profile.proxies = nodes;
+  return { nodes, skipped, profile };
 }
 
 function normalizeUrl(input) {
@@ -146,7 +161,8 @@ class ProxySubscriptionStore {
       id: `subscription:${item.id}:${index}`,
       name: node.name,
       source: item.name,
-      node
+      node,
+      profile: item.profile || { proxies: item.nodes }
     })));
   }
 
@@ -164,7 +180,10 @@ class ProxySubscriptionStore {
     } catch {
       throw new Error("订阅下载失败，请检查地址和浏览器网络连接");
     }
-    if (!response.url || !["http:", "https:"].includes(new URL(response.url).protocol)) {
+    const responseUrl = typeof response.url === "string" && response.url ? response.url : url;
+    let responseProtocol = "";
+    try { responseProtocol = new URL(responseUrl).protocol; } catch {}
+    if (!["http:", "https:"].includes(responseProtocol)) {
       throw new Error("订阅跳转到不受支持的地址");
     }
     const body = await readLimitedResponse(response);
@@ -184,8 +203,8 @@ class ProxySubscriptionStore {
       const existing = current.find(item => item.url === url);
       if (!existing && current.length >= MAX_SUBSCRIPTIONS) throw new Error("最多添加 10 个订阅");
       const name = String(inputName || "").trim().slice(0, 40) || new URL(url).hostname;
-      const { nodes, skipped } = await this.download(url);
-      const item = { id: existing?.id || crypto.randomUUID(), name, url, nodes, skipped, updatedAt: new Date().toISOString() };
+      const { nodes, skipped, profile } = await this.download(url);
+      const item = { id: existing?.id || crypto.randomUUID(), name, url, nodes, profile, skipped, updatedAt: new Date().toISOString() };
       if (existing) current.splice(current.indexOf(existing), 1, item);
       else current.push(item);
       this.write(current);
@@ -198,8 +217,9 @@ class ProxySubscriptionStore {
       const current = this.read();
       const item = current.find(entry => entry.id === id);
       if (!item) throw new Error("订阅不存在");
-      const { nodes, skipped } = await this.download(item.url);
+      const { nodes, skipped, profile } = await this.download(item.url);
       item.nodes = nodes;
+      item.profile = profile;
       item.skipped = skipped;
       item.updatedAt = new Date().toISOString();
       this.write(current);

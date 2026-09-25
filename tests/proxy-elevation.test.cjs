@@ -10,13 +10,13 @@ test("elevation handoff is single use and contains no node credentials", () => {
   const filePath = path.join(directory, "intent.json");
   try {
     const now = Date.now();
-    const nonce = writeElevationIntent(filePath, { nodeId: "local", mode: "global", systemProxy: true }, now);
+    const nonce = writeElevationIntent(filePath, { nodeId: "local", groupName: "PROXY", mode: "global", systemProxy: true }, now);
     const disk = fs.readFileSync(filePath, "utf8");
     assert.equal(disk.includes("uuid"), false);
     assert.equal(consumeElevationIntent(filePath, "0".repeat(48), now + 1000), null);
     assert.ok(fs.existsSync(filePath));
     assert.deepEqual(consumeElevationIntent(filePath, nonce, now + 1000), {
-      nodeId: "local", mode: "global", systemProxy: true, tun: true
+      nodeId: "local", groupName: "PROXY", mode: "global", systemProxy: true, tun: true
     });
     assert.equal(consumeElevationIntent(filePath, nonce, now + 1000), null);
   } finally {

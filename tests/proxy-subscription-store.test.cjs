@@ -30,9 +30,11 @@ function fixture(t, fetcher) {
 
 test("parses Clash YAML and Base64 VLESS lists without activating nodes", () => {
   const result = parseSubscription(yaml.dump({ proxies: [node, { ...node, name: "unsupported", type: "trojan" }] }));
-  assert.equal(result.nodes.length, 1);
-  assert.equal(result.skipped, 1);
+  assert.equal(result.nodes.length, 2);
+  assert.equal(result.skipped, 0);
   assert.equal(result.nodes[0].name, "Japan");
+  assert.equal(result.nodes[1].type, "trojan");
+  assert.equal(result.profile.proxies.length, 2);
   const uri = "vless://123e4567-e89b-12d3-a456-426614174000@jp.example.test:443?type=tcp&security=reality&sni=front.example.test&pbk=example-public-key&sid=1234abcd#Japan";
   assert.equal(parseSubscription(Buffer.from(uri).toString("base64")).nodes[0].name, "Japan");
   assert.throws(() => normalizeUrl("file:///secret"), /HTTP/);
@@ -61,6 +63,13 @@ test("adds, refreshes and removes an encrypted subscription", async t => {
   assert.equal((await store.refresh(added[0].id)).length, 1);
   assert.equal(downloadCount, 2);
   assert.deepEqual(await store.remove(added[0].id), []);
+});
+
+test("accepts Electron net.fetch responses without a response URL", async t => {
+  const body = yaml.dump({ proxies: [node] });
+  const { store } = fixture(t, async () => new Response(body, { status: 200 }));
+  const result = await store.add("https://example.invalid/clash/example", "Electron 订阅");
+  assert.equal(result[0].nodeCount, 1);
 });
 
 test("invalid downloads leave saved subscriptions untouched", async t => {

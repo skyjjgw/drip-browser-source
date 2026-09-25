@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' liquid: data:; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' liquid: data:; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline' liquid://ui; connect-src 'none'">
 <title>Drip</title>
 <style>
   /* ═══════════════════════════════════════════════════════════════════
@@ -188,6 +188,18 @@
     border-radius: 50%; background: rgba(11,31,53,.36); cursor: pointer;
     box-shadow: 0 12px 32px rgba(0,0,0,.28); transition: transform .2s, box-shadow .2s;
   }
+  .hero__vinyl::before {
+    content: ""; position: absolute; inset: -5px; border-radius: 50%; pointer-events: none;
+    opacity: .55;
+    border: 1px solid color-mix(in srgb, var(--accent) 68%, transparent);
+    box-shadow: 0 0 12px 2px color-mix(in srgb, var(--accent) 54%, transparent),
+      0 0 30px 7px color-mix(in srgb, var(--accent) 24%, transparent);
+    animation: hero-glow-breathe 3.2s ease-in-out infinite;
+  }
+  @keyframes hero-glow-breathe {
+    0%, 100% { opacity: .34; transform: scale(.97); }
+    50% { opacity: .85; transform: scale(1.05); }
+  }
   .hero__vinyl:hover { transform: translateY(-3px); box-shadow: 0 0 0 2px var(--accent), 0 16px 36px rgba(0,0,0,.32); }
   .hero__vinyl:focus-visible { outline: 3px solid var(--accent); outline-offset: 5px; }
   .hero__vinyl img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
@@ -302,9 +314,11 @@
     padding-bottom: 8px;
     margin-top: -8px;
   }
-  .links__head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+  .links__head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
   .links__head h2 { font-size: 13px; font-weight: 600; color: var(--text-2); }
   .links__head span { font-size: 12px; color: var(--text-3); }
+  .links__head .icon-btn { width: 26px; height: 26px; margin-left: auto; }
+  .links__head .icon-btn svg { width: 14px; height: 14px; }
   .links__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
   .site {
     display: flex; align-items: center; gap: 12px;
@@ -323,8 +337,43 @@
     background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 85%, #fff), color-mix(in srgb, var(--accent) 55%, #000));
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 4px 12px color-mix(in srgb, var(--accent) 35%, transparent);
   }
-  .site__name { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site__name { display: block; font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .site__desc { font-size: 11px; color: var(--text-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site__copy { min-width: 0; }
+  .links__empty { grid-column: 1 / -1; color: var(--text-2); font-size: 12px; padding: 12px 0; }
+
+  .sites-dialog {
+    position: fixed; inset: var(--browser-chrome-height) 0 0;
+    width: min(420px, calc(100vw - 32px)); max-height: min(680px, calc(100dvh - var(--browser-chrome-height) - 32px));
+    margin: auto; padding: 18px; overflow: auto; color: var(--text-1); border: 1px solid var(--border);
+    border-radius: 8px; background-color: color-mix(in srgb, var(--bg) 86%, var(--glass-color));
+    backdrop-filter: blur(24px) saturate(1.4);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 24px 70px rgba(0,0,0,.38);
+  }
+  html[data-theme="dark"] .sites-dialog { color-scheme: dark; }
+  .sites-dialog__list { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .sites-dialog::backdrop { background: rgba(5,12,24,.62); backdrop-filter: blur(5px); }
+  .sites-dialog__head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .sites-dialog__head h3 { flex: 1; font-size: 15px; font-weight: 600; }
+  .sites-dialog__head .icon-btn { width: 28px; height: 28px; }
+  .sites-dialog__list { max-height: 390px; overflow-y: auto; }
+  .sites-dialog__row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .sites-dialog__row .site__ico { width: 30px; height: 30px; border-radius: 8px; font-size: 12px; }
+  .sites-dialog__row .site__copy { flex: 1; }
+  .sites-dialog__row .icon-btn { width: 28px; height: 28px; flex: 0 0 auto; border: 0; }
+  .sites-dialog__row .icon-btn svg { width: 15px; height: 15px; }
+  .sites-dialog__actions { display: flex; gap: 8px; margin-top: 14px; }
+  .sites-dialog__actions .btn:last-child { margin-left: auto; }
+  .sites-form { display: flex; flex-direction: column; gap: 12px; }
+  .sites-form[hidden], #sitesListView[hidden] { display: none; }
+  .sites-form label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-2); }
+  .sites-form input:not([type="color"]) {
+    width: 100%; height: 36px; padding: 0 10px; color: var(--text-1);
+    background: color-mix(in srgb, var(--bg) 55%, transparent); border: 1px solid var(--border); border-radius: 6px;
+  }
+  .sites-form input[type="color"] { width: 40px; height: 30px; padding: 1px; border: 1px solid var(--border); background: transparent; cursor: pointer; }
+  .sites-form__error { min-height: 16px; color: #ff9c9c; font-size: 11px; }
+  html[data-theme="light"] .sites-form__error { color: #b91c1c; }
 
   .foot { flex: 0 0 auto; padding: 18px 0 26px; text-align: center; color: var(--text-3); font-size: 12px; }
 
@@ -549,6 +598,7 @@
       <section class="links">
         <div class="links__head">
           <h2>常用站点</h2><span>点击直达</span>
+          <button class="icon-btn" id="manageSitesButton" type="button" title="管理站点" aria-label="管理站点"><i data-lucide="pencil"></i></button>
         </div>
         <div class="links__grid" id="linksGrid"></div>
       </section>
@@ -656,6 +706,32 @@
     </aside>
   </div>
 
+  <dialog class="sites-dialog" id="sitesDialog" aria-labelledby="sitesDialogTitle">
+    <div class="sites-dialog__head">
+      <h3 id="sitesDialogTitle">管理站点</h3>
+      <button class="icon-btn" id="closeSitesButton" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+    </div>
+    <div id="sitesListView">
+      <div class="sites-dialog__list" id="sitesList"></div>
+      <div class="sites-dialog__actions">
+        <button class="btn btn--primary" id="addSiteButton" type="button">添加网站</button>
+        <button class="btn" id="resetSitesButton" type="button">恢复默认</button>
+      </div>
+    </div>
+    <form class="sites-form" id="sitesForm" hidden>
+      <label>名称<input id="siteName" maxlength="24" required autocomplete="off"></label>
+      <label>网址<input id="siteUrl" maxlength="2048" required inputmode="url" spellcheck="false" autocomplete="off" placeholder="https://example.com"></label>
+      <label>说明<input id="siteDescription" maxlength="32" autocomplete="off"></label>
+      <label>图标颜色<input id="siteColor" type="color" value="#4f8cff"></label>
+      <p class="sites-form__error" id="sitesFormError" role="alert"></p>
+      <div class="sites-dialog__actions">
+        <button class="btn" id="cancelSiteButton" type="button">取消</button>
+        <button class="btn btn--primary" type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+<script src="liquid://ui/vendor/lucide.js"></script>
 <script>
   /* ═══ 状态与设计 token（与插件 DEFAULTS 对齐） ═══ */
   const ACCENT_PRESETS = ["#4f8cff", "#67DCE7", "#DD8FAC", "#F3B75F", "#F1717F", "#CBE77D"];
@@ -931,7 +1007,7 @@
   })();
 
   /* ── 快捷站点 ── */
-  const SITES = [
+  const DEFAULT_SITES = [
     { n: "DeepSeek", d: "AI 对话助手", c: "#4D6BFE", u: "https://chat.deepseek.com/" },
     { n: "GitHub", d: "代码托管", c: "#24292F", u: "https://github.com/" },
     { n: "Bilibili", d: "视频弹幕", c: "#FB7299", u: "https://www.bilibili.com/" },
@@ -941,17 +1017,179 @@
     { n: "豆瓣", d: "书影音", c: "#00B51D", u: "https://www.douban.com/" },
     { n: "V2EX", d: "极客社区", c: "#2B6CB0", u: "https://www.v2ex.com/" },
   ];
-  (function buildSites() {
+  const SITES_KEY = "drip-quick-sites-v1";
+  const sitesDialog = document.getElementById("sitesDialog");
+  const sitesForm = document.getElementById("sitesForm");
+  let sites = loadSites();
+  let editingSiteIndex = -1;
+
+  function normalizedSite(site) {
+    if (!site || typeof site !== "object" || typeof site.n !== "string" || typeof site.u !== "string") return null;
+    const name = site.n.trim();
+    const description = typeof site.d === "string" ? site.d.trim() : "";
+    const color = typeof site.c === "string" ? site.c : "";
+    if (!name || name.length > 24 || description.length > 32 || !/^#[0-9a-f]{6}$/i.test(color)) return null;
+    let url;
+    try { url = new URL(site.u.trim()); } catch { return null; }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || site.u.length > 2048) return null;
+    return { n: name, d: description, c: color, u: url.href };
+  }
+
+  function loadSites() {
+    try {
+      const raw = localStorage.getItem(SITES_KEY);
+      if (raw === null) return DEFAULT_SITES.map(site => ({ ...site }));
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length > 24) throw new Error("Invalid site list");
+      return parsed.map(normalizedSite).filter(Boolean);
+    } catch { return DEFAULT_SITES.map(site => ({ ...site })); }
+  }
+
+  function commitSites(next) {
+    try {
+      localStorage.setItem(SITES_KEY, JSON.stringify(next));
+      sites = next;
+      buildSites();
+      buildSitesList();
+      return true;
+    } catch {
+      document.getElementById("sitesFormError").textContent = "保存失败，请检查本地存储空间";
+      return false;
+    }
+  }
+
+  function siteIcon(site) {
+    const icon = document.createElement("span");
+    icon.className = "site__ico";
+    icon.style.background = `linear-gradient(135deg, ${site.c}d9, ${site.c}99)`;
+    icon.textContent = Array.from(site.n)[0];
+    return icon;
+  }
+
+  function siteCopy(site) {
+    const copy = document.createElement("span");
+    copy.className = "site__copy";
+    const name = document.createElement("span");
+    name.className = "site__name";
+    name.textContent = site.n;
+    const description = document.createElement("div");
+    description.className = "site__desc";
+    description.textContent = site.d;
+    copy.append(name, description);
+    return copy;
+  }
+
+  function buildSites() {
     const grid = document.getElementById("linksGrid");
-    grid.innerHTML = "";
-    SITES.forEach(s => {
-      const a = document.createElement("a");
-      a.className = "site glass"; a.href = s.u; a.rel = "noopener"; a.title = "打开网站";
-      a.innerHTML = '<span class="site__ico" style="background:linear-gradient(135deg,' + s.c + 'd9,' + s.c + '99)">' + s.n[0] + '</span>'
-        + '<span style="min-width:0"><span class="site__name">' + s.n + '</span><div class="site__desc">' + s.d + '</div></span>';
-      grid.appendChild(a);
+    grid.replaceChildren();
+    if (!sites.length) {
+      const empty = document.createElement("p");
+      empty.className = "links__empty";
+      empty.textContent = "暂无站点，可在右侧添加";
+      grid.appendChild(empty);
+    }
+    sites.forEach(site => {
+      const link = document.createElement("a");
+      link.className = "site glass";
+      link.href = site.u;
+      link.rel = "noopener";
+      link.title = `打开 ${site.n}`;
+      link.append(siteIcon(site), siteCopy(site));
+      grid.appendChild(link);
     });
-  })();
+  }
+
+  function makeSiteAction(icon, title, handler) {
+    const button = document.createElement("button");
+    button.className = "icon-btn";
+    button.type = "button";
+    button.title = title;
+    button.setAttribute("aria-label", title);
+    const glyph = document.createElement("i");
+    glyph.dataset.lucide = icon;
+    button.appendChild(glyph);
+    button.addEventListener("click", handler);
+    return button;
+  }
+
+  function buildSitesList() {
+    const list = document.getElementById("sitesList");
+    list.replaceChildren();
+    sites.forEach((site, index) => {
+      const row = document.createElement("div");
+      row.className = "sites-dialog__row";
+      row.append(siteIcon(site), siteCopy(site));
+      row.append(makeSiteAction("pencil", `编辑 ${site.n}`, () => openSiteEditor(index)));
+      row.append(makeSiteAction("trash-2", `删除 ${site.n}`, () => {
+        if (window.confirm(`删除“${site.n}”？`)) commitSites(sites.filter((_, i) => i !== index));
+      }));
+      list.appendChild(row);
+    });
+    window.lucide?.createIcons({ icons: window.lucide.icons });
+  }
+
+  function showSiteList() {
+    sitesForm.hidden = true;
+    document.getElementById("sitesListView").hidden = false;
+    document.getElementById("sitesDialogTitle").textContent = "管理站点";
+  }
+
+  function openSiteEditor(index) {
+    editingSiteIndex = index;
+    const site = sites[index];
+    sitesForm.reset();
+    document.getElementById("siteName").value = site?.n || "";
+    document.getElementById("siteUrl").value = site?.u || "";
+    document.getElementById("siteDescription").value = site?.d || "";
+    document.getElementById("siteColor").value = site?.c || "#4f8cff";
+    document.getElementById("sitesFormError").textContent = "";
+    document.getElementById("sitesListView").hidden = true;
+    sitesForm.hidden = false;
+    document.getElementById("sitesDialogTitle").textContent = site ? "编辑网站" : "添加网站";
+    document.getElementById("siteName").focus();
+  }
+
+  document.getElementById("manageSitesButton").addEventListener("click", () => {
+    showSiteList();
+    buildSitesList();
+    sitesDialog.showModal();
+  });
+  document.getElementById("closeSitesButton").addEventListener("click", () => sitesDialog.close());
+  document.getElementById("addSiteButton").addEventListener("click", () => {
+    if (sites.length >= 24) return;
+    openSiteEditor(-1);
+  });
+  document.getElementById("cancelSiteButton").addEventListener("click", showSiteList);
+  document.getElementById("resetSitesButton").addEventListener("click", () => {
+    if (window.confirm("恢复默认站点？自定义站点将被移除。")) commitSites(DEFAULT_SITES.map(site => ({ ...site })));
+  });
+  sitesForm.addEventListener("submit", event => {
+    event.preventDefault();
+    const input = document.getElementById("siteUrl").value.trim();
+    const site = normalizedSite({
+      n: document.getElementById("siteName").value,
+      u: /^[a-z][a-z0-9+.-]*:/i.test(input) ? input : `https://${input}`,
+      d: document.getElementById("siteDescription").value,
+      c: document.getElementById("siteColor").value
+    });
+    if (!site) {
+      document.getElementById("sitesFormError").textContent = "请输入有效的 http/https 网站地址";
+      return;
+    }
+    if (editingSiteIndex < 0 && sites.length >= 24) {
+      document.getElementById("sitesFormError").textContent = "最多添加 24 个站点";
+      return;
+    }
+    const next = sites.slice();
+    if (editingSiteIndex < 0) next.push(site);
+    else next[editingSiteIndex] = site;
+    if (commitSites(next)) showSiteList();
+  });
+  sitesDialog.addEventListener("click", event => {
+    if (event.target === sitesDialog) sitesDialog.close();
+  });
+  buildSites();
+  window.lucide?.createIcons({ icons: window.lucide.icons });
 
   buildSwatches("accentRow", "accent", ACCENT_PRESETS);
   buildSwatches("glassColorRow", "glass", GLASS_COLOR_PRESETS);

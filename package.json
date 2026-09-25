@@ -1,12 +1,13 @@
 {
   "name": "drip-browser-pc",
-  "version": "0.3.12",
+  "version": "0.3.24",
   "private": true,
-  "description": "Drip for Windows",
+  "description": "Open-source Windows browser shell with tabs, account UI and optional proxy integration",
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
-    "self-test": "electron . --self-test"
+    "self-test": "electron . --self-test",
+    "test": "node --test tests/*.test.cjs"
   },
   "devDependencies": {
     "electron": "44.0.0",

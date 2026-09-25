@@ -260,11 +260,18 @@ button { -webkit-app-region: no-drag; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .toolbar-actions { flex: 0 0 auto; }
+.browser-route-button { position: relative; }
+.browser-route-button::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 6px; height: 6px; border-radius: 50%; background: #8fe0bd; box-shadow: 0 0 0 1px #244463; }
+.browser-route-button[data-mode="direct"]::after { background: #c9d5e2; }
+.browser-route-button[data-mode="system"]::after { background: #ffcc89; }
+.browser-route-button.has-error::after { background: #ff8f8f; }
+.browser-route-button[aria-expanded="true"] { background: rgba(255, 255, 255, 0.12); }
 #bookmarkPage.is-active { color: #ffd36e; }
 #bookmarkPage.is-active svg { fill: currentColor; }
 .profile-button { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; color: white; border: 1px solid rgba(255,255,255,0.16); border-radius: 50%; background: linear-gradient(135deg, #6b8cff, #8f68cb); font-size: 11px; font-weight: 700; }
 .profile-button:hover { filter: brightness(1.12); }
 .profile-button { position: relative; }
+.profile-button img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 .profile-button.is-signed-in::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 7px; height: 7px; border: 2px solid #213754; border-radius: 50%; background: #43d39e; }
 .find-bar {
   position: absolute;
@@ -340,6 +347,13 @@ button.menu-row:hover, button.data-row:hover { background: rgba(255,255,255,0.07
 .empty-state svg { width: 30px; height: 30px; margin-bottom: 10px; color: #7796c2; }
 .profile-hero { display: flex; align-items: center; gap: 14px; padding: 14px 9px 19px; border-bottom: 1px solid var(--line); }
 .profile-avatar-large { width: 54px; height: 54px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; color: white; background: linear-gradient(135deg, #6b8cff, #9566c9); font-size: 19px; font-weight: 700; }
+.profile-avatar-edit { position: relative; overflow: hidden; padding: 0; border: 1px solid rgba(255,255,255,.18); cursor: pointer; }
+.profile-avatar-edit img { width: 100%; height: 100%; object-fit: cover; }
+.profile-avatar-edit:disabled { cursor: wait; }
+.avatar-edit-icon { position: absolute; right: 0; bottom: 0; width: 20px; height: 20px; display: grid; place-items: center; color: white; background: rgba(8,19,32,.86); border-radius: 50%; }
+.avatar-edit-icon svg { width: 11px; height: 11px; }
+.avatar-remove { margin-top: 6px; padding: 0; color: #a8c8ff; border: 0; background: transparent; font-size: 10.5px; cursor: pointer; }
+.avatar-remove:hover { color: white; }
 .profile-hero h3 { margin: 0 0 4px; font-size: 15px; }
 .profile-hero p { margin: 0; color: #8e9daf; font-size: 11px; }
 .form-section { padding: 16px 9px; }
@@ -777,6 +791,35 @@ body.is-remote .nav-spacer { flex: 0 1 18px; }
 }
 
 .module-overlay { inset: var(--chrome-height) 0 0; }
+
+.browser-route-overlay { position: fixed; inset: var(--chrome-height) 0 0; z-index: 11; }
+.browser-route-overlay[hidden], .browser-route-form[hidden], .browser-route-error[hidden] { display: none; }
+.browser-route-scrim { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: rgba(2, 7, 15, 0.13); }
+.browser-route-panel { position: absolute; top: 7px; right: 153px; width: min(330px, calc(100vw - 20px)); max-height: calc(100vh - 110px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(196, 221, 247, 0.28); border-radius: 8px; background: rgba(16, 35, 55, 0.97); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38); backdrop-filter: blur(24px); }
+.browser-route-heading { height: 46px; flex: 0 0 auto; display: flex; align-items: center; gap: 9px; padding: 0 14px; border-bottom: 1px solid rgba(220, 237, 255, 0.12); }
+.browser-route-heading svg { width: 17px; height: 17px; }
+.browser-route-heading strong { flex: 1; font-size: 13px; }
+.browser-route-heading span { color: #9fb7d0; font-size: 10px; }
+.browser-route-options { padding: 5px; overflow: auto; }
+.browser-route-caption { padding: 10px 10px 5px; color: #91aac4; font-size: 10px; }
+.browser-route-option { width: 100%; min-height: 48px; display: flex; align-items: center; gap: 10px; padding: 7px 9px; border: 0; border-radius: 5px; background: transparent; color: #eaf4ff; text-align: left; }
+.browser-route-option:hover, .browser-route-option.selected { background: rgba(104, 164, 238, 0.18); }
+.browser-route-option > svg:first-child { width: 18px; height: 18px; color: #a8cef5; }
+.browser-route-copy { min-width: 0; flex: 1; }
+.browser-route-copy strong, .browser-route-copy small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.browser-route-copy strong { font-size: 12px; font-weight: 600; }
+.browser-route-copy small { margin-top: 3px; color: #9db5cb; font-size: 10px; }
+.browser-route-check { width: 16px; height: 16px; color: #85dbbe; opacity: 0; }
+.browser-route-option.selected .browser-route-check { opacity: 1; }
+.browser-route-add { width: 100%; height: 38px; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 0; border-top: 1px solid rgba(220, 237, 255, 0.12); background: rgba(207, 231, 255, 0.04); color: #bfdbfa; font-size: 11px; text-align: left; }
+.browser-route-add:hover { background: rgba(104, 164, 238, 0.15); }
+.browser-route-add svg { width: 15px; height: 15px; }
+.browser-route-form { display: grid; grid-template-columns: 98px minmax(0, 1fr) 69px; gap: 7px; padding: 10px; border-top: 1px solid rgba(220, 237, 255, 0.12); }
+.browser-route-form input, .browser-route-form select { min-width: 0; height: 34px; padding: 0 8px; border: 1px solid rgba(197, 222, 248, 0.25); border-radius: 5px; background: rgba(5, 24, 42, 0.55); color: #eff7ff; font-size: 11px; }
+.browser-route-form input::placeholder { color: #8fa8be; }
+.browser-route-form button { grid-column: 1 / -1; height: 34px; border: 1px solid #80b5fa; border-radius: 5px; background: #3d78cf; color: white; font-size: 11px; }
+.browser-route-error { margin: 0; padding: 8px 12px; border-top: 1px solid rgba(255, 176, 170, 0.2); color: #ffc2bd; font-size: 10px; }
+@media (max-width: 760px) { .browser-route-panel { right: 8px; } }
 
 @media (max-width: 760px) {
   .window-button { width: 40px; height: 40px; }

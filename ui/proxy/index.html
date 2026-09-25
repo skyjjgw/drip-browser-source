@@ -54,7 +54,19 @@
             <section class="frame">
               <div class="frame-head"><i data-lucide="radio-tower" class="icon"></i><h3>当前节点</h3><button type="button" class="link-btn" data-go="proxies">查看节点 ›</button></div>
               <div class="frame-body">
-                <div class="active-node"><span class="row-icon teal"><i data-lucide="wifi" class="icon"></i></span><span class="node-copy"><strong id="home-node-name">日本代理</strong><small id="home-node-detail">本机配置 · 未连接</small></span><span class="node-idle">--</span></div>
+                <div class="active-node"><span class="row-icon teal"><i data-lucide="wifi" class="icon"></i></span><span class="node-copy"><strong id="home-node-name">暂无节点</strong><small id="home-node-detail">请先兑换邀请码或添加订阅</small></span><span class="node-idle">--</span></div>
+                <div class="node-select-stack">
+                  <div class="node-select-field" id="home-group-picker">
+                    <span class="node-select-label">代理组</span>
+                    <button type="button" class="node-select-trigger" id="home-group-trigger" aria-haspopup="listbox" aria-expanded="false"><span id="home-group-choice">PROXY</span><i data-lucide="chevron-down" class="icon" aria-hidden="true"></i></button>
+                    <div class="node-picker-menu" id="home-group-menu" role="listbox" aria-label="选择代理组" hidden></div>
+                  </div>
+                  <div class="node-select-field" id="home-node-picker">
+                    <span class="node-select-label">节点</span>
+                    <button type="button" class="node-select-trigger" id="home-node-trigger" aria-haspopup="listbox" aria-expanded="false"><span id="home-node-choice">暂无节点</span><i data-lucide="chevron-down" class="icon" aria-hidden="true"></i></button>
+                    <div class="node-picker-menu" id="home-node-menu" role="listbox" aria-label="选择当前节点" hidden></div>
+                  </div>
+                </div>
                 <div class="node-meta"><span>当前策略组：未启用</span><span id="home-node-state">未导入</span></div>
               </div>
             </section>
@@ -79,7 +91,6 @@
           <form id="subscription-form" class="toolbar-line"><input id="subscription-name" class="text-input" maxlength="40" placeholder="名称（可选）" aria-label="订阅名称" autocomplete="off"><input id="subscription-url" class="text-input" type="url" maxlength="2048" required placeholder="粘贴订阅地址" aria-label="订阅地址" autocomplete="off" spellcheck="false"><button type="submit" class="primary-btn"><i data-lucide="plus" class="icon"></i>添加</button></form>
           <p id="subscription-message" class="page-heading" role="status" aria-live="polite"></p>
           <section class="frame"><div class="frame-head"><i data-lucide="database" class="icon"></i><h3>现有订阅</h3></div><div id="subscription-list"><div class="empty">暂无订阅</div></div></section>
-          <section class="frame local-node-frame"><div class="frame-head"><i data-lucide="file-code-2" class="icon"></i><h3>本机配置</h3></div><div class="list-row"><span class="row-icon teal"><i data-lucide="wifi" class="icon"></i></span><span class="list-row-main"><strong>日本代理</strong><small id="local-node-detail">未导入 · 代理未启用</small></span><button type="button" class="ghost-btn" id="import-node"><i data-lucide="download" class="icon"></i><span>从 Clash Verge 导入</span></button></div></section>
         </div>
 
         <div class="page" id="page-connections"><p class="page-heading">当前活动连接 <span id="connections-count">0</span></p><section class="frame table-wrap"><table class="table" id="connections-table" hidden><thead><tr><th>目标</th><th>进程</th><th>规则</th><th>节点</th><th>上传</th><th>下载</th></tr></thead><tbody id="connections-body"></tbody></table><div class="empty" id="connections-empty">代理未启用，暂无连接数据</div></section></div>
