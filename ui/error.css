@@ -1,0 +1,15 @@
+:root { color-scheme: dark; font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+* { box-sizing: border-box; }
+html, body { width: 100%; min-height: 100%; margin: 0; }
+body { display: grid; place-items: center; color: #eaf0f7; background: #101724; }
+main { width: min(620px, calc(100% - 48px)); padding: 56px 0; }
+img { width: 58px; height: 58px; border-radius: 13px; }
+.eyebrow { margin: 22px 0 7px; color: #7790b4; font-size: 11px; font-weight: 650; }
+h1 { margin: 0; font-size: 30px; font-weight: 650; letter-spacing: 0; }
+.message { margin: 14px 0 0; color: #b1bdcc; font-size: 14px; line-height: 1.65; }
+.target { margin: 7px 0 0; overflow-wrap: anywhere; color: #79889d; font-size: 12px; }
+.actions { display: flex; gap: 9px; margin-top: 28px; }
+a { height: 38px; display: inline-flex; align-items: center; padding: 0 15px; color: #dce5f1; border: 1px solid rgba(220,232,248,.17); border-radius: 7px; background: rgba(255,255,255,.055); text-decoration: none; }
+a:hover { background: rgba(255,255,255,.1); }
+a.primary { color: #08111f; border-color: transparent; background: #8ab7ff; font-weight: 600; }
+.code { margin-top: 24px; color: #65758c; font-size: 11px; }

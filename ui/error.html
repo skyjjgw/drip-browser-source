@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src liquid:">
+  <title>页面无法打开</title>
+  <link rel="stylesheet" href="liquid://ui/error.css">
+</head>
+<body>
+  <main>
+    <img src="liquid://assets/icon.png" alt="">
+    <p class="eyebrow">DRIP</p>
+    <h1>页面暂时无法打开</h1>
+    <p class="message" id="message">请检查网站地址或稍后重试。</p>
+    <p class="target" id="target"></p>
+    <div class="actions">
+      <a class="primary" id="retry" href="liquid://home/index.html">重新加载</a>
+      <a href="liquid://home/index.html">返回主页</a>
+    </div>
+    <p class="code" id="code"></p>
+  </main>
+  <script src="liquid://ui/error.js"></script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' liquid: data:; media-src liquid:">
+  <title>Drip</title>
+  <link rel="stylesheet" href="liquid://ui/chrome.css">
+</head>
+<body class="is-home">
+  <div class="chrome-backdrop" aria-hidden="true">
+    <video id="chromeBackdropVideo" muted loop playsinline preload="metadata" poster="liquid://home/bg-poster.jpg">
+      <source src="liquid://home/bg.mp4" type="video/mp4">
+    </video>
+    <div class="chrome-aurora"></div>
+  </div>
+
+  <div class="browser-chrome">
+    <div class="tabs-row">
+      <button class="connection-indicator" id="connectionIndicator" type="button" aria-label="服务器连接状态">
+        <span class="connection-orbit"><img src="liquid://assets/icon.png" alt=""></span>
+      </button>
+      <div class="tabs" id="tabs" role="tablist"></div>
+      <button class="icon-button new-tab" id="newTab" type="button" title="新建标签页" aria-label="新建标签页">
+        <i data-lucide="plus"></i>
+      </button>
+      <div class="title-drag-space"></div>
+      <div class="window-controls" aria-label="窗口控制">
+        <button class="window-button" id="minimizeWindow" type="button" title="最小化" aria-label="最小化"><i data-lucide="minus"></i></button>
+        <button class="window-button" id="maximizeWindow" type="button" title="最大化" aria-label="最大化"><i data-lucide="square"></i></button>
+        <button class="window-button close-window" id="closeWindow" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+      </div>
+    </div>
+
+    <div class="navigation-row">
+      <div class="nav-group">
+        <button class="icon-button" id="back" type="button" title="后退" aria-label="后退"><i data-lucide="arrow-left"></i></button>
+        <button class="icon-button" id="forward" type="button" title="前进" aria-label="前进"><i data-lucide="arrow-right"></i></button>
+        <button class="icon-button" id="reload" type="button" title="刷新" aria-label="刷新"><i data-lucide="rotate-cw"></i></button>
+        <button class="icon-button" id="home" type="button" title="主页" aria-label="主页"><i data-lucide="house"></i></button>
+      </div>
+      <form class="address-shell" id="addressForm">
+        <button class="site-security" id="siteSecurity" type="button" title="查看网站信息" aria-label="查看网站信息"><i data-lucide="sliders-horizontal"></i></button>
+        <input id="address" type="text" autocomplete="off" spellcheck="false" aria-label="地址栏" placeholder="搜索或输入网址">
+        <span class="loading-indicator" id="loading" aria-hidden="true"></span>
+        <div class="address-suggestions" id="addressSuggestions" hidden></div>
+      </form>
+      <div class="toolbar-actions">
+        <button class="icon-button" id="bookmarkPage" type="button" title="收藏此页" aria-label="收藏此页"><i data-lucide="star"></i></button>
+        <button class="icon-button" id="themeButton" type="button" title="切换深浅主题" aria-label="切换深浅主题"><i data-lucide="sun"></i></button>
+        <button class="icon-button" id="appearanceButton" type="button" title="外观设置" aria-label="外观设置"><i data-lucide="palette"></i></button>
+        <button class="icon-button" id="downloadsButton" type="button" title="下载内容" aria-label="下载内容"><i data-lucide="download"></i></button>
+        <button class="profile-button" id="profileButton" type="button" title="Drip 账号" aria-label="Drip 账号"><span id="profileInitial">本</span></button>
+        <button class="icon-button" id="menuButton" type="button" title="浏览器菜单" aria-label="浏览器菜单"><i data-lucide="settings"></i></button>
+      </div>
+    </div>
+
+    <form class="find-bar" id="findBar" hidden>
+      <input id="findInput" type="text" autocomplete="off" spellcheck="false" aria-label="在网页中查找" placeholder="在网页中查找">
+      <span class="find-result" id="findResult">0/0</span>
+      <button class="mini-button" id="findPrevious" type="button" title="上一个" aria-label="上一个"><i data-lucide="chevron-up"></i></button>
+      <button class="mini-button" id="findNext" type="button" title="下一个" aria-label="下一个"><i data-lucide="chevron-down"></i></button>
+      <button class="mini-button" id="closeFind" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+    </form>
+  </div>
+
+  <div class="module-overlay" id="moduleOverlay" hidden>
+    <button class="module-scrim" id="moduleScrim" type="button" aria-label="关闭面板"></button>
+    <section class="module-panel" role="dialog" aria-modal="true" aria-labelledby="moduleTitle">
+      <header class="module-header">
+        <div>
+          <p class="module-eyebrow">Drip</p>
+          <h2 id="moduleTitle">浏览器菜单</h2>
+        </div>
+        <button class="icon-button" id="closeModule" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+      </header>
+      <div class="module-content" id="moduleContent"></div>
+    </section>
+  </div>
+
+  <div class="update-prompt" id="updatePrompt" hidden>
+    <section class="update-prompt-panel" role="dialog" aria-modal="true" aria-labelledby="updatePromptTitle">
+      <button class="update-prompt-close" id="closeUpdatePrompt" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+      <div class="update-prompt-icon"><img src="liquid://assets/icon.png" alt=""></div>
+      <p class="module-eyebrow">Drip</p>
+      <h2 id="updatePromptTitle">发现新版本</h2>
+      <p class="update-prompt-version" id="updatePromptVersion"></p>
+      <p class="update-prompt-copy">可以立即下载更新。点击左上角图标可随时查看版本与更新状态。</p>
+      <div class="update-prompt-actions">
+        <button class="text-button" id="updatePromptDetails" type="button"><i data-lucide="external-link"></i>查看版本详情</button>
+        <button class="primary-button" id="updatePromptDownload" type="button"><i data-lucide="file-down"></i>下载文件</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="liquid://ui/vendor/lucide.js"></script>
+  <script src="liquid://ui/chrome.js"></script>
+</body>
+</html>

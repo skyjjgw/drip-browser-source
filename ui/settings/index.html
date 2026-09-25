@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' liquid://ui; style-src 'self' 'unsafe-inline'; img-src 'self' liquid: data:;">
+  <title>设置 - Drip</title>
+  <link rel="stylesheet" href="liquid://settings/settings.css">
+</head>
+<body>
+  <div class="settings-shell">
+    <header class="settings-header">
+      <button class="back-button" id="backHome" type="button" title="返回主页" aria-label="返回主页"><i data-lucide="arrow-left"></i></button>
+      <div>
+        <p class="settings-eyebrow">Drip</p>
+        <h1>设置</h1>
+      </div>
+    </header>
+    <main class="settings-body" id="settingsBody" tabindex="-1"></main>
+  </div>
+  <script src="liquid://ui/vendor/lucide.js"></script>
+  <script src="liquid://settings/settings.js"></script>
+</body>
+</html>
